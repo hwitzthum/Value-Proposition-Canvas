@@ -7,20 +7,18 @@ import os
 import html
 import json
 import hashlib
+from dataclasses import dataclass, field
 from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 import httpx
-from typing import Optional
+from typing import List, Optional
 import time
 from textwrap import dedent
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-
-# ============ Performance: Debounce Configuration ============
-VALIDATION_DEBOUNCE_MS = 500  # Wait 500ms after typing stops before validating
 
 # ============ Session Persistence Configuration ============
 SESSION_FILE = Path.home() / ".value_proposition_canvas_session.json"
@@ -29,59 +27,60 @@ AUTO_SAVE_ENABLED = True
 # ============ Theme Configuration ============
 DEFAULT_THEME = "Light"
 THEME_ICONS = {
-    "Light": "☀️",
-    "Dark": "🌙",
-    "Sepia": "📜",
-    "Ocean": "🌊",
+    "Light": "Light",
+    "Dark": "Dark",
+    "Sepia": "Sepia",
+    "Ocean": "Ocean",
 }
 THEME_CONFIGS = {
     "Light": {
-        "color_bg_primary": "#faf8f5",
+        "color_bg_primary": "#f4f7fb",
         "color_bg_card": "#ffffff",
         "color_bg_elevated": "#ffffff",
-        "color_text_primary": "#1a1a2e",
-        "color_text_secondary": "#5a5a6e",
-        "color_text_muted": "#8a8a9e",
-        "color_accent_gold": "#c9a227",
-        "color_accent_gold_light": "#f5ead6",
-        "color_pain": "#c45c3e",
-        "color_pain_light": "#fdeae5",
-        "color_gain": "#2d6a6a",
-        "color_gain_light": "#e5f0f0",
-        "color_success": "#4a7c59",
-        "color_success_light": "#e8f0eb",
-        "color_warning": "#b8860b",
-        "color_warning_light": "#fdf6e3",
-        "color_error": "#a63d40",
-        "color_error_light": "#fce8e8",
-        "color_border": "#e8e4df",
-        "color_border_light": "#f3f0ec",
-        "header_gradient": "linear-gradient(145deg, #1a1a2e 0%, #2d2d44 50%, #1a1a2e 100%)",
-        "header_overlay_a": "rgba(201, 162, 39, 0.15)",
-        "header_overlay_b": "rgba(45, 106, 106, 0.12)",
-        "header_text": "#ffffff",
-        "surface_tint": "#f8f6f2",
-        "success_tint": "#d8e8de",
-        "warning_tint": "#f9f1dc",
-        "primary_hover": "#2d2d44",
-        "restore_title": "#7a5c0a",
-        "restore_description": "#8a6b1a",
-        "success_text": "#3a6348",
-        "noise_opacity": "0.015",
-        "progress_active": "#1a1a2e",
+        "color_text_primary": "#102a43",
+        "color_text_secondary": "#3f556f",
+        "color_text_muted": "#6f859d",
+        "color_accent_gold": "#2f6fed",
+        "color_accent_gold_light": "#e8f0ff",
+        "color_pain": "#c14f4f",
+        "color_pain_light": "#fdeaea",
+        "color_gain": "#1d7d67",
+        "color_gain_light": "#e5f4ef",
+        "color_success": "#237b58",
+        "color_success_light": "#e6f3ee",
+        "color_warning": "#a56a1f",
+        "color_warning_light": "#fef2e4",
+        "color_error": "#b24343",
+        "color_error_light": "#fde8e8",
+        "color_border": "#d7e1ec",
+        "color_border_light": "#e8eef5",
+        "header_gradient": "linear-gradient(135deg, #f9fbff 0%, #eff4fb 100%)",
+        "header_overlay_a": "rgba(47, 111, 237, 0.08)",
+        "header_overlay_b": "rgba(22, 119, 160, 0.06)",
+        "header_text": "#102a43",
+        "surface_tint": "#f6f9fd",
+        "success_tint": "#ecf6f1",
+        "warning_tint": "#fbf2e7",
+        "primary_hover": "#2358c7",
+        "restore_title": "#8a5a1d",
+        "restore_description": "#627892",
+        "success_text": "#1f5f46",
+        "noise_opacity": "0.01",
+        "coaching_tip_tint": "#f7fafe",
+        "progress_active": "#2f6fed",
         "progress_active_text": "#ffffff",
-        "progress_active_glow": "rgba(26, 26, 46, 0.1)",
-        "progress_complete": "#4a7c59",
+        "progress_active_glow": "rgba(47, 111, 237, 0.15)",
+        "progress_complete": "#237b58",
         "progress_complete_text": "#ffffff",
         "progress_upcoming_bg": "#ffffff",
-        "progress_upcoming_border": "#e8e4df",
-        "progress_upcoming_text": "#8a8a9e",
-        "font_display": "'Fraunces', Georgia, serif",
-        "font_body": "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif",
-        "texture_tint": "rgba(201, 162, 39, 0.08)",
-        "motif_color": "rgba(201, 162, 39, 0.35)",
-        "rail_gradient": "linear-gradient(160deg, #ffffff 0%, #f8f4ec 100%)",
-        "motion_distance": "10px",
+        "progress_upcoming_border": "#d7e1ec",
+        "progress_upcoming_text": "#6f859d",
+        "font_display": "'Sora', 'Segoe UI', sans-serif",
+        "font_body": "'Manrope', -apple-system, BlinkMacSystemFont, sans-serif",
+        "texture_tint": "rgba(47, 111, 237, 0.07)",
+        "motif_color": "rgba(47, 111, 237, 0.32)",
+        "rail_gradient": "linear-gradient(180deg, #ffffff 0%, #f6f9fd 100%)",
+        "motion_distance": "6px",
     },
     "Dark": {
         "color_bg_primary": "#0f141a",
@@ -116,6 +115,7 @@ THEME_CONFIGS = {
         "restore_description": "#ebc767",
         "success_text": "#c5e9d5",
         "noise_opacity": "0.035",
+        "coaching_tip_tint": "#2e2416",
         "progress_active": "#f1c56d",
         "progress_active_text": "#0f141a",
         "progress_active_glow": "rgba(241, 197, 109, 0.22)",
@@ -124,7 +124,7 @@ THEME_CONFIGS = {
         "progress_upcoming_bg": "#1b232d",
         "progress_upcoming_border": "#324154",
         "progress_upcoming_text": "#9fb0c5",
-        "font_display": "'Bricolage Grotesque', 'Segoe UI', sans-serif",
+        "font_display": "'Sora', 'Segoe UI', sans-serif",
         "font_body": "'Manrope', -apple-system, BlinkMacSystemFont, sans-serif",
         "texture_tint": "rgba(93, 198, 198, 0.09)",
         "motif_color": "rgba(241, 197, 109, 0.5)",
@@ -164,6 +164,7 @@ THEME_CONFIGS = {
         "restore_description": "#9b7340",
         "success_text": "#4b6b42",
         "noise_opacity": "0.02",
+        "coaching_tip_tint": "#f5e8d2",
         "progress_active": "#6a503f",
         "progress_active_text": "#fff9f1",
         "progress_active_glow": "rgba(106, 80, 63, 0.18)",
@@ -172,7 +173,7 @@ THEME_CONFIGS = {
         "progress_upcoming_bg": "#fff9f1",
         "progress_upcoming_border": "#dbc8b1",
         "progress_upcoming_text": "#947a67",
-        "font_display": "'Cormorant Garamond', Georgia, serif",
+        "font_display": "'Instrument Sans', 'Segoe UI', sans-serif",
         "font_body": "'Instrument Sans', -apple-system, BlinkMacSystemFont, sans-serif",
         "texture_tint": "rgba(151, 115, 63, 0.09)",
         "motif_color": "rgba(183, 134, 63, 0.42)",
@@ -212,6 +213,7 @@ THEME_CONFIGS = {
         "restore_description": "#8d6e2b",
         "success_text": "#24563f",
         "noise_opacity": "0.02",
+        "coaching_tip_tint": "#daf2f4",
         "progress_active": "#123447",
         "progress_active_text": "#f3fcff",
         "progress_active_glow": "rgba(18, 52, 71, 0.2)",
@@ -221,7 +223,7 @@ THEME_CONFIGS = {
         "progress_upcoming_border": "#d5e6eb",
         "progress_upcoming_text": "#6b8795",
         "font_display": "'Sora', 'Segoe UI', sans-serif",
-        "font_body": "'Nunito Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+        "font_body": "'Manrope', -apple-system, BlinkMacSystemFont, sans-serif",
         "texture_tint": "rgba(60, 157, 179, 0.1)",
         "motif_color": "rgba(27, 127, 131, 0.4)",
         "rail_gradient": "linear-gradient(160deg, #ffffff 0%, #e9f5f7 100%)",
@@ -239,8 +241,8 @@ STEP_PURPOSES = [
 
 # ============ Page Configuration ============
 st.set_page_config(
-    page_title="Work Process Reflection Canvas",
-    page_icon="🎯",
+    page_title="Value Proposition Canvas Studio",
+    page_icon="📐",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -249,52 +251,53 @@ st.set_page_config(
 st.markdown("""
 <style>
     /* ═══════════════════════════════════════════════════════════════════════════
-       VALUE PROPOSITION CANVAS - EDITORIAL LUXURY DESIGN SYSTEM
-       A sophisticated, magazine-inspired aesthetic with warm tones
+       VALUE PROPOSITION CANVAS - ENTERPRISE LIGHT DESIGN SYSTEM
+       Clean, modern, and delivery-focused
        ═══════════════════════════════════════════════════════════════════════════ */
 
     /* Import Distinctive Typography */
-    @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=Manrope:wght@400;500;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,500&family=Instrument+Sans:wght@400;500;600;700&family=Sora:wght@400;500;600;700&family=Nunito+Sans:wght@400;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&family=Sora:wght@400;500;600;700&display=swap');
 
-    /* CSS Custom Properties - Refined Color Palette */
+    /* CSS Custom Properties - Enterprise Light Baseline */
     :root {
-        --color-bg-primary: #faf8f5;
+        --coaching-tip-tint: #f7fafe;
+        --color-bg-primary: #f4f7fb;
         --color-bg-card: #ffffff;
         --color-bg-elevated: #ffffff;
-        --color-text-primary: #1a1a2e;
-        --color-text-secondary: #5a5a6e;
-        --color-text-muted: #8a8a9e;
-        --color-accent-gold: #c9a227;
-        --color-accent-gold-light: #f5ead6;
-        --color-pain: #c45c3e;
-        --color-pain-light: #fdeae5;
-        --color-gain: #2d6a6a;
-        --color-gain-light: #e5f0f0;
-        --color-success: #4a7c59;
-        --color-success-light: #e8f0eb;
-        --color-warning: #b8860b;
-        --color-warning-light: #fdf6e3;
-        --color-error: #a63d40;
-        --color-error-light: #fce8e8;
-        --color-border: #e8e4df;
-        --color-border-light: #f3f0ec;
-        --shadow-sm: 0 1px 2px rgba(26, 26, 46, 0.04);
-        --shadow-md: 0 4px 12px rgba(26, 26, 46, 0.08);
-        --shadow-lg: 0 12px 32px rgba(26, 26, 46, 0.12);
-        --shadow-glow: 0 0 40px rgba(201, 162, 39, 0.15);
+        --color-text-primary: #102a43;
+        --color-text-secondary: #3f556f;
+        --color-text-muted: #6f859d;
+        --color-accent-gold: #2f6fed;
+        --color-accent-gold-light: #e8f0ff;
+        --color-pain: #c14f4f;
+        --color-pain-light: #fdeaea;
+        --color-gain: #1d7d67;
+        --color-gain-light: #e5f4ef;
+        --color-success: #237b58;
+        --color-success-light: #e6f3ee;
+        --color-warning: #a56a1f;
+        --color-warning-light: #fef2e4;
+        --color-error: #b24343;
+        --color-error-light: #fde8e8;
+        --color-border: #d7e1ec;
+        --color-border-light: #e8eef5;
+        --shadow-sm: 0 1px 2px rgba(16, 42, 67, 0.04), 0 6px 18px rgba(16, 42, 67, 0.05);
+        --shadow-md: 0 8px 24px rgba(16, 42, 67, 0.08);
+        --shadow-lg: 0 14px 36px rgba(16, 42, 67, 0.11);
+        --shadow-glow: 0 6px 18px rgba(47, 111, 237, 0.2);
         --radius-sm: 8px;
-        --radius-md: 12px;
+        --radius-md: 14px;
         --radius-lg: 20px;
         --radius-full: 999px;
         --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
         --transition-smooth: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         --transition-bounce: 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-        --font-display: 'Fraunces', Georgia, serif;
-        --font-body: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-        --texture-tint: rgba(201, 162, 39, 0.08);
-        --motif-color: rgba(201, 162, 39, 0.35);
-        --rail-gradient: linear-gradient(160deg, #ffffff 0%, #f8f4ec 100%);
-        --motion-distance: 10px;
+        --font-display: 'Sora', 'Segoe UI', sans-serif;
+        --font-body: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
+        --texture-tint: rgba(47, 111, 237, 0.07);
+        --motif-color: rgba(47, 111, 237, 0.32);
+        --rail-gradient: linear-gradient(180deg, #ffffff 0%, #f6f9fd 100%);
+        --motion-distance: 6px;
         --font-scale: 1;
     }
 
@@ -586,7 +589,7 @@ st.markdown("""
        COACHING TIP - Elegant Callout Box
        ═══════════════════════════════════════════════════════════════════════════ */
     .coaching-tip {
-        background: linear-gradient(135deg, var(--color-accent-gold-light) 0%, #faf5eb 100%);
+        background: linear-gradient(135deg, var(--color-accent-gold-light) 0%, var(--coaching-tip-tint) 100%);
         border-radius: var(--radius-md);
         padding: 1.375rem 1.5rem;
         margin: 1.25rem 0;
@@ -1332,6 +1335,319 @@ st.markdown("""
         background: linear-gradient(135deg, #2d2d44 0%, var(--color-text-primary) 100%);
         box-shadow: var(--shadow-lg), var(--shadow-glow);
     }
+
+    /* ═══════════════════════════════════════════════════════════════════════════
+       ENTERPRISE LIGHT REFINEMENT
+       ═══════════════════════════════════════════════════════════════════════════ */
+    :root {
+        --radius-sm: 8px;
+        --radius-md: 14px;
+        --radius-lg: 20px;
+        --shadow-sm: 0 1px 2px rgba(16, 42, 67, 0.04), 0 6px 18px rgba(16, 42, 67, 0.05);
+        --shadow-md: 0 8px 24px rgba(16, 42, 67, 0.08);
+        --shadow-lg: 0 14px 36px rgba(16, 42, 67, 0.11);
+        --shadow-glow: 0 6px 18px rgba(47, 111, 237, 0.2);
+    }
+
+    .stApp {
+        background: linear-gradient(180deg, #f9fbff 0%, var(--color-bg-primary) 160px);
+    }
+
+    .stApp::before {
+        opacity: 0.008;
+        mix-blend-mode: normal;
+        filter: none;
+    }
+
+    .main .block-container {
+        max-width: 1120px;
+        padding-top: 1.25rem;
+        padding-bottom: 2.5rem;
+    }
+
+    .main-header {
+        text-align: left;
+        padding: 1.9rem 2rem 1.75rem;
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+    }
+
+    .main-header::after {
+        opacity: 0.2;
+    }
+
+    .main-header .hero-kicker {
+        font-size: 0.64rem;
+        letter-spacing: 0.1em;
+        font-weight: 700;
+        color: var(--color-accent-gold);
+        border-color: rgba(47, 111, 237, 0.25);
+        background: var(--color-accent-gold-light);
+    }
+
+    .main-header h1 {
+        font-size: clamp(1.9rem, 3vw, 2.45rem);
+        font-weight: 640;
+        margin-bottom: 0.45rem;
+    }
+
+    .main-header h1::before {
+        margin: 0 0 0.85rem;
+        width: 64px;
+        background: var(--color-accent-gold);
+    }
+
+    .main-header p {
+        max-width: 700px;
+        font-size: 0.98rem;
+        line-height: 1.55;
+        color: var(--color-text-secondary);
+        opacity: 1;
+    }
+
+    .hero-signature {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin-top: 0.95rem;
+    }
+
+    .hero-signature-line {
+        width: 64px;
+        margin: 0;
+        background: linear-gradient(90deg, transparent, var(--motif-color), transparent);
+    }
+
+    .hero-signature-copy {
+        font-size: 0.66rem;
+        letter-spacing: 0.09em;
+        color: var(--color-text-muted);
+        opacity: 1;
+    }
+
+    .theme-switcher,
+    .design-rail,
+    .progress-bar-container,
+    .summary-section,
+    .publish-section,
+    .milestone-card,
+    .restore-banner,
+    .step-actions-bar {
+        border: 1px solid var(--color-border);
+        background: var(--color-bg-card);
+        box-shadow: var(--shadow-sm);
+    }
+
+    .theme-switcher {
+        border-radius: var(--radius-md);
+        padding: 0.9rem 1rem 0.65rem;
+    }
+
+    .theme-switcher-label,
+    .rail-title {
+        font-size: 0.66rem;
+        letter-spacing: 0.1em;
+    }
+
+    .design-rail {
+        border-radius: var(--radius-md);
+        padding: 0.95rem;
+    }
+
+    .progress-bar-container {
+        border-radius: var(--radius-md);
+        padding: 0.95rem 0.75rem 0.75rem;
+        margin: 1.1rem 0 1.55rem;
+    }
+
+    .progress-indicator {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        font-size: 0.8rem;
+    }
+
+    .progress-label {
+        margin-top: 0.45rem;
+        font-size: 0.62rem;
+        letter-spacing: 0.07em;
+    }
+
+    .coaching-tip {
+        border: 1px solid var(--color-border);
+        border-left: 3px solid var(--color-accent-gold);
+        border-radius: var(--radius-md);
+        background: var(--color-bg-card);
+    }
+
+    .coaching-tip h4 {
+        text-transform: none;
+        font-size: 0.78rem;
+        letter-spacing: 0.03em;
+        color: var(--color-text-secondary);
+    }
+
+    .quality-score {
+        border-radius: 10px;
+        text-transform: none;
+        letter-spacing: 0.01em;
+        font-size: 0.8rem;
+    }
+
+    .item-card {
+        border-radius: 12px;
+        border: 1px solid var(--color-border);
+        background: #ffffff;
+        box-shadow: none;
+    }
+
+    .item-number {
+        width: 26px;
+        height: 26px;
+        border-radius: 6px;
+        font-size: 0.68rem;
+    }
+
+    .item-chip {
+        font-size: 0.61rem;
+        letter-spacing: 0.05em;
+    }
+
+    .item-action-group .stButton > button {
+        font-size: 0.72rem;
+        min-height: 36px;
+        padding: 0.3rem 0.55rem;
+        border-radius: 8px;
+    }
+
+    .stButton > button,
+    .stDownloadButton > button {
+        text-transform: none;
+        letter-spacing: 0.01em;
+        font-weight: 600;
+        font-size: 0.84rem;
+    }
+
+    .stButton > button[kind="primary"],
+    .stDownloadButton > button {
+        background: var(--color-accent-gold);
+        border-color: var(--color-accent-gold);
+        color: #ffffff;
+    }
+
+    .stButton > button[kind="primary"]:hover,
+    .stDownloadButton > button:hover {
+        background: var(--primary_hover, var(--color-accent-gold));
+        border-color: var(--primary_hover, var(--color-accent-gold));
+        box-shadow: var(--shadow-md);
+    }
+
+    .stTextArea > div > div > textarea,
+    .stTextInput > div > div > input {
+        border-radius: 10px;
+        border: 1px solid var(--color-border);
+        background: #ffffff;
+    }
+
+    .stTextArea > div > div > textarea {
+        min-height: 150px;
+    }
+
+    .milestone-card,
+    .summary-section,
+    .restore-banner,
+    .publish-section {
+        border-radius: var(--radius-md);
+    }
+
+    .step-actions-bar {
+        bottom: 0.35rem;
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-md);
+    }
+
+    .success-banner {
+        border-radius: var(--radius-lg);
+        padding: 1.95rem 1.5rem;
+        border: 1px solid rgba(35, 123, 88, 0.2);
+        box-shadow: none;
+    }
+
+    .success-banner h2 {
+        font-size: 1.58rem;
+    }
+
+    .publish-section h4 {
+        margin: 0;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        font-size: 0.7rem;
+        color: var(--color-text-secondary);
+    }
+
+    .empty-state {
+        border-width: 1px;
+        border-style: solid;
+        border-color: var(--color-border);
+        border-radius: var(--radius-md);
+        background: #ffffff;
+    }
+
+    .empty-state-icon {
+        width: 52px;
+        height: 52px;
+        margin: 0 auto 0.85rem;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.95rem;
+        font-weight: 700;
+        letter-spacing: 0.07em;
+        border: 1px solid var(--color-border);
+        color: var(--color-text-secondary);
+        background: var(--color-bg-elevated);
+    }
+
+    @media (max-width: 768px) {
+        .main-header {
+            padding: 1.45rem 1.1rem 1.35rem;
+        }
+
+        .hero-signature {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0.35rem;
+        }
+
+        .progress-bar-container {
+            padding: 0.78rem 0.3rem 0.58rem;
+        }
+
+        .progress-step-content {
+            min-width: 56px;
+        }
+
+        .progress-indicator {
+            width: 33px;
+            height: 33px;
+            border-radius: 9px;
+        }
+
+        .progress-label {
+            font-size: 0.56rem;
+            max-width: 56px;
+        }
+
+        .progress-line {
+            margin: 0 0.2rem 1.8rem;
+        }
+
+        .step-actions-bar {
+            padding: 0.68rem;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1358,7 +1674,7 @@ def render_theme_picker():
         selected = st.radio(
             "Theme Mode",
             options,
-            format_func=lambda mode: f"{THEME_ICONS.get(mode, '🎨')} {mode}",
+            format_func=lambda mode: THEME_ICONS.get(mode, mode),
             horizontal=True,
             label_visibility="collapsed",
             key="theme_picker",
@@ -1445,6 +1761,7 @@ def apply_theme_styles():
         --motif-color: {theme["motif_color"]};
         --rail-gradient: {theme["rail_gradient"]};
         --motion-distance: {theme["motion_distance"]};
+        --coaching-tip-tint: {theme["coaching_tip_tint"]};
         --font-scale: {"1.08" if large_text else "1"};
     }}
 
@@ -1582,13 +1899,18 @@ def has_saved_session() -> bool:
 
 def restore_session(session_data: dict):
     """Restore session state from saved data."""
+    reset_session_state(preserve_theme=False)
+
+    # Overlay canvas data
     st.session_state.step = session_data.get("step", 0)
     st.session_state.job_description = session_data.get("job_description", "")
-    st.session_state.pain_points = session_data.get("pain_points", [])
-    st.session_state.gain_points = session_data.get("gain_points", [])
+    st.session_state.pain_points = list(session_data.get("pain_points", []))
+    st.session_state.gain_points = list(session_data.get("gain_points", []))
     st.session_state.job_validated = session_data.get("job_validated", False)
     st.session_state.pains_validated = session_data.get("pains_validated", False)
     st.session_state.gains_validated = session_data.get("gains_validated", False)
+
+    # Restore theme preferences
     theme_mode = session_data.get("theme_mode", DEFAULT_THEME)
     st.session_state.theme_mode = theme_mode if theme_mode in THEME_CONFIGS else DEFAULT_THEME
     st.session_state.theme_picker = st.session_state.theme_mode
@@ -1598,32 +1920,54 @@ def restore_session(session_data: dict):
     st.session_state.pref_high_contrast_checkbox = st.session_state.pref_high_contrast
     st.session_state.pref_reduce_motion_checkbox = st.session_state.pref_reduce_motion
     st.session_state.pref_large_text_checkbox = st.session_state.pref_large_text
-    st.session_state.editing_pain_index = None
-    st.session_state.editing_gain_index = None
-    st.session_state.new_pain_input = ""
-    st.session_state.new_gain_input = ""
-    clear_inline_notice("pain")
-    clear_inline_notice("gain")
+
     st.session_state.session_loaded = True
 
 
 # ============ Session State Initialization ============
+
+# Canonical defaults for all mutable session state keys.
+# Used by init_session_state and reset_session_state to avoid scattered magic defaults.
+INITIAL_SESSION_STATE: dict = {
+    "step": 0,
+    "job_description": "",
+    "pain_points": [],
+    "gain_points": [],
+    "job_validated": False,
+    "pains_validated": False,
+    "gains_validated": False,
+    "editing_pain_index": None,
+    "editing_gain_index": None,
+    "new_pain_input": "",
+    "new_gain_input": "",
+    "session_loaded": False,
+}
+
+
+def reset_session_state(preserve_theme: bool = False):
+    """Reset canvas data to defaults. Optionally preserves theme preferences."""
+    for key, default in INITIAL_SESSION_STATE.items():
+        # Lists must be fresh copies to avoid shared references
+        st.session_state[key] = list(default) if isinstance(default, list) else default
+    clear_inline_notice("pain")
+    clear_inline_notice("gain")
+    if not preserve_theme:
+        st.session_state.theme_mode = DEFAULT_THEME
+        st.session_state.theme_picker = DEFAULT_THEME
+        st.session_state.pref_high_contrast = False
+        st.session_state.pref_reduce_motion = False
+        st.session_state.pref_large_text = False
+        st.session_state.pref_high_contrast_checkbox = False
+        st.session_state.pref_reduce_motion_checkbox = False
+        st.session_state.pref_large_text_checkbox = False
+
+
 def init_session_state():
     """Initialize session state variables."""
-    if 'step' not in st.session_state:
-        st.session_state.step = 0  # 0: Welcome, 1: Job, 2: Pains, 3: Gains, 4: Review
-    if 'job_description' not in st.session_state:
-        st.session_state.job_description = ""
-    if 'pain_points' not in st.session_state:
-        st.session_state.pain_points = []
-    if 'gain_points' not in st.session_state:
-        st.session_state.gain_points = []
-    if 'job_validated' not in st.session_state:
-        st.session_state.job_validated = False
-    if 'pains_validated' not in st.session_state:
-        st.session_state.pains_validated = False
-    if 'gains_validated' not in st.session_state:
-        st.session_state.gains_validated = False
+    for key, default in INITIAL_SESSION_STATE.items():
+        if key not in st.session_state:
+            st.session_state[key] = list(default) if isinstance(default, list) else default
+
     if 'theme_mode' not in st.session_state:
         st.session_state.theme_mode = DEFAULT_THEME
     elif st.session_state.theme_mode not in THEME_CONFIGS:
@@ -1642,23 +1986,8 @@ def init_session_state():
         st.session_state.pref_reduce_motion_checkbox = st.session_state.pref_reduce_motion
     if 'pref_large_text_checkbox' not in st.session_state:
         st.session_state.pref_large_text_checkbox = st.session_state.pref_large_text
-    if 'editing_pain_index' not in st.session_state:
-        st.session_state.editing_pain_index = None
-    if 'editing_gain_index' not in st.session_state:
-        st.session_state.editing_gain_index = None
-    if 'new_pain_input' not in st.session_state:
-        st.session_state.new_pain_input = ""
-    if 'new_gain_input' not in st.session_state:
-        st.session_state.new_gain_input = ""
-    if 'session_loaded' not in st.session_state:
-        st.session_state.session_loaded = False
     if 'show_restore_prompt' not in st.session_state:
         st.session_state.show_restore_prompt = has_saved_session()
-    # Performance: Track last validation to implement debouncing
-    if 'last_validated_job' not in st.session_state:
-        st.session_state.last_validated_job = ""
-    if 'last_job_validation_result' not in st.session_state:
-        st.session_state.last_job_validation_result = None
 
 
 # ============ Performance: Cached HTTP Client ============
@@ -2044,12 +2373,12 @@ def render_header():
     """Render the main header."""
     st.markdown("""
         <div class="main-header section-reveal">
-            <div class="hero-kicker">Canvas Studio • Guided by AI</div>
-            <h1>🎯 Work Process Reflection Canvas</h1>
-            <p>Understand your work better with AI-powered guidance</p>
+            <div class="hero-kicker">Value Proposition Canvas</div>
+            <h1>Work Process Reflection Studio</h1>
+            <p>Turn operational friction into a clear, shareable strategy narrative.</p>
             <div class="hero-signature">
                 <div class="hero-signature-line"></div>
-                <div class="hero-signature-copy">From friction to clarity in one flow</div>
+                <div class="hero-signature-copy">Structured insight, production-ready output</div>
             </div>
         </div>
     """, unsafe_allow_html=True)
@@ -2101,64 +2430,8 @@ def render_progress():
     # Join steps outside the f-string
     joined_steps = ''.join(steps_html)
 
-    # Style block (separate from content to avoid f-string interpolation issues)
-    style_block = """
-<style>
-.progress-bar-container {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    padding: 0 0.5rem;
-    margin: 1rem 0;
-}
-.progress-step-wrapper {
-    display: flex;
-    align-items: center;
-    flex: 1;
-}
-.progress-step-wrapper:last-child {
-    flex: 0;
-}
-.progress-step-content {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-width: 70px;
-}
-.progress-indicator {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 600;
-    font-size: 0.875rem;
-    z-index: 2;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 1px 2px rgba(26, 26, 46, 0.04);
-}
-.progress-label {
-    margin-top: 0.625rem;
-    font-size: 0.6875rem;
-    text-align: center;
-    max-width: 80px;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
-}
-.progress-line {
-    flex: 1;
-    height: 2px;
-    margin: 0 0.375rem;
-    margin-bottom: 1.75rem;
-    border-radius: 1px;
-    transition: background 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-</style>
-"""
-
     container_html = f'<div class="progress-bar-container section-reveal stagger-1" role="list" aria-label="Progress steps">{joined_steps}</div>'
-    st.markdown(style_block + container_html, unsafe_allow_html=True)
+    st.markdown(container_html, unsafe_allow_html=True)
 
 
 def render_coaching_tip(tip: str):
@@ -2167,7 +2440,7 @@ def render_coaching_tip(tip: str):
     safe_tip = html.escape(tip).replace(chr(10), '<br>')
     st.markdown(f"""
         <div class="coaching-tip section-reveal stagger-2">
-            <h4>💡 Coaching Tip</h4>
+            <h4>Coaching guidance</h4>
             <p>{safe_tip}</p>
         </div>
     """, unsafe_allow_html=True)
@@ -2177,20 +2450,17 @@ def render_quality_score(score: int):
     """Render a quality score badge with accessibility support."""
     if score >= 75:
         level = "high"
-        emoji = "✅"
         level_text = "high quality"
     elif score >= 50:
         level = "medium"
-        emoji = "⚠️"
         level_text = "medium quality, needs improvement"
     else:
         level = "low"
-        emoji = "❌"
         level_text = "low quality, significant improvements needed"
 
     st.markdown(f"""
         <div class="quality-score {level}" role="status" aria-label="Quality score: {score}%, {level_text}">
-            {emoji} Quality Score: {score}%
+            Quality score: {score}%
         </div>
     """, unsafe_allow_html=True)
 
@@ -2209,12 +2479,15 @@ def render_validation_message(msg_type: str, message: str):
 
 def render_empty_state(icon: str, title: str, description: str, hint: str = ""):
     """Render an empty state placeholder."""
+    safe_icon = html.escape(icon)
+    safe_title = html.escape(title)
+    safe_description = html.escape(description)
     hint_html = f'<div class="empty-state-hint">{html.escape(hint)}</div>' if hint else ""
     st.markdown(f"""
-        <div class="empty-state section-reveal" role="status" aria-label="{title}">
-            <div class="empty-state-icon">{icon}</div>
-            <div class="empty-state-title">{title}</div>
-            <div class="empty-state-description">{description}</div>
+        <div class="empty-state section-reveal" role="status" aria-label="{safe_title}">
+            <div class="empty-state-icon">{safe_icon}</div>
+            <div class="empty-state-title">{safe_title}</div>
+            <div class="empty-state-description">{safe_description}</div>
             {hint_html}
         </div>
     """, unsafe_allow_html=True)
@@ -2244,7 +2517,7 @@ def render_session_restore_prompt():
 
     st.markdown(f"""
         <div class="restore-banner section-reveal" role="alert">
-            <div class="restore-banner-title">📂 Previous Session Found</div>
+            <div class="restore-banner-title">Previous Session Found</div>
             <div class="restore-banner-description">
                 You have unsaved work from {saved_at} ({summary}).
             </div>
@@ -2256,12 +2529,12 @@ def render_session_restore_prompt():
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("✅ Continue Where I Left Off", use_container_width=True, type="primary"):
+        if st.button("Continue where I left off", use_container_width=True, type="primary"):
             restore_session(session_data)
             st.session_state.show_restore_prompt = False
             st.rerun()
     with col2:
-        if st.button("🗑️ Start Fresh", use_container_width=True):
+        if st.button("Start fresh", use_container_width=True):
             clear_saved_session()
             st.session_state.show_restore_prompt = False
             st.rerun()
@@ -2275,7 +2548,7 @@ def render_welcome():
         render_session_restore_prompt()
         return  # Don't show the rest until user decides
 
-    st.markdown("## Welcome! 👋")
+    st.markdown("## Welcome")
     tip = get_coaching_tip("welcome")
 
     main_col, rail_col = st.columns([2.05, 1], gap="large")
@@ -2302,7 +2575,7 @@ def render_welcome():
         st.markdown("---")
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            if st.button("🚀 Start Building Your Canvas", use_container_width=True, type="primary"):
+            if st.button("Start building your canvas", use_container_width=True, type="primary"):
                 st.session_state.step = 1
                 st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
@@ -2310,7 +2583,7 @@ def render_welcome():
 
 def render_job_description():
     """Render the job description step."""
-    st.markdown("## Step 1: Define Your Job 🎯")
+    st.markdown("## Step 1: Define the Core Job")
     tip = get_coaching_tip("job")
 
     main_col, rail_col = st.columns([2.05, 1], gap="large")
@@ -2341,13 +2614,13 @@ def render_job_description():
 
         result = None
         if job_desc:
-            result = call_api("/api/validate/job-description", "POST", {"description": job_desc})
+            result = validate_job_description_cached(get_content_hash(job_desc), job_desc)
 
-        if st.button("✅ Validate Now (Cmd/Ctrl+Enter)", key="job_validate_now"):
-            if job_desc.strip():
-                result = call_api("/api/validate/job-description", "POST", {"description": job_desc})
-            else:
+        if st.button("Validate now (Cmd/Ctrl+Enter)", key="job_validate_now"):
+            if not job_desc.strip():
                 render_validation_message("warning", "Add a job description before validating.")
+            else:
+                render_validation_message("success", "Validation refreshed.")
 
         if result and "error" not in result:
             render_quality_score(result.get("score", 0))
@@ -2355,12 +2628,12 @@ def render_job_description():
                 for feedback in result["feedback"]:
                     render_validation_message("warning", feedback)
             if result.get("suggestions"):
-                with st.expander("💡 Suggestions for improvement"):
+                with st.expander("Suggestions for improvement"):
                     for suggestion in result["suggestions"]:
                         st.markdown(f"• {suggestion}")
             st.session_state.job_validated = result.get("valid", False)
 
-        if st.button("🤖 Get AI Suggestions", key="job_suggestions"):
+        if st.button("Get suggestions", key="job_suggestions"):
             with st.spinner("Getting suggestions..."):
                 suggestions = call_api("/api/suggestions", "POST", {
                     "step": "job",
@@ -2371,10 +2644,10 @@ def render_job_description():
 
         st.markdown("---")
         render_step_actions(
-            back_label="⬅️ Back",
+            back_label="Back",
             back_key="job_back",
             back_step=0,
-            next_label="Continue to Pain Points ➡️",
+            next_label="Continue to Pain Points",
             next_key="job_next",
             next_step=2,
             next_disabled=not st.session_state.job_validated,
@@ -2385,59 +2658,94 @@ def render_job_description():
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_pain_points():
-    """Render the pain points step."""
-    st.markdown("## Step 2: Identify Pain Points 😓")
-    tip = get_coaching_tip("pains")
-    remaining = max(0, 7 - len(st.session_state.pain_points))
+@dataclass
+class _ItemStepConfig:
+    """Configuration for a generic item-collection wizard step (pain or gain points)."""
+    collection_key: str
+    item_label: str
+    item_type: str
+    validate_endpoint: str
+    validate_cached_fn: object  # callable: (hash, tuple) -> dict
+    editing_index_key: str
+    new_input_key: str
+    validated_key: str
+    min_required: int
+    step_heading: str
+    step_title: str
+    focus_prompt: str
+    checklist_tail: List[str]   # items after the count line
+    main_question: str
+    add_label: str
+    add_placeholder: str
+    empty_icon: str
+    empty_title: str
+    empty_description: str
+    tip_step_name: str
+    suggestions_step_name: str
+    back_label: str
+    back_key: str
+    back_step: int
+    next_label: str
+    next_key: str
+    next_step: int
+
+
+def _render_item_collection_step(cfg: _ItemStepConfig):
+    """Generic wizard step for collecting pain or gain points."""
+    st.markdown(cfg.step_heading)
+    tip = get_coaching_tip(cfg.tip_step_name)
+    items: list = st.session_state.get(cfg.collection_key, [])
+    remaining = max(0, cfg.min_required - len(items))
 
     main_col, rail_col = st.columns([2.05, 1], gap="large")
     with rail_col:
         render_step_rail(
-            step_title="Step 2 Focus",
-            focus_prompt="Capture distinct, root-cause pains rather than vague complaints.",
+            step_title=cfg.step_title,
+            focus_prompt=cfg.focus_prompt,
             checks=[
-                f"{len(st.session_state.pain_points)}/7 captured",
-                "Keep each pain independent",
-                "Describe observable impact",
+                f"{len(items)}/{cfg.min_required} captured",
+                *cfg.checklist_tail,
             ],
             tip=tip,
         )
 
     with main_col:
         st.markdown('<div class="design-main section-reveal">', unsafe_allow_html=True)
-        st.markdown("### What obstacles and frustrations do you face in this work?")
-        st.markdown(f"You need at least **7 independent** pain points. Currently: **{len(st.session_state.pain_points)}**/7")
+        st.markdown(f"### {cfg.main_question}")
+        st.markdown(
+            f"You need at least **{cfg.min_required} independent** {cfg.item_label}s. "
+            f"Currently: **{len(items)}**/{cfg.min_required}"
+        )
 
-        st.markdown("#### Your Pain Points:")
-        if st.session_state.pain_points:
-            for i, pain in enumerate(st.session_state.pain_points):
+        st.markdown(f"#### Your {cfg.item_label.capitalize()}s:")
+        if items:
+            for i, item_text in enumerate(items):
                 col1, col2, col3 = st.columns([9, 1, 1])
                 with col1:
-                    st.markdown(build_item_card_html(i, pain, "pain"), unsafe_allow_html=True)
+                    st.markdown(build_item_card_html(i, item_text, cfg.item_type), unsafe_allow_html=True)
                 with col2:
                     st.markdown('<div class="item-action-group">', unsafe_allow_html=True)
-                    if st.button("✏️", key=f"edit_pain_{i}", help="Edit this pain point"):
-                        st.session_state.editing_pain_index = i
-                        clear_inline_notice("pain")
+                    if st.button("Edit", key=f"edit_{cfg.item_type}_{i}", help=f"Edit this {cfg.item_label}"):
+                        st.session_state[cfg.editing_index_key] = i
+                        clear_inline_notice(cfg.item_type)
                         st.rerun()
                     st.markdown('</div>', unsafe_allow_html=True)
                 with col3:
                     st.markdown('<div class="item-action-group">', unsafe_allow_html=True)
-                    if st.button("🗑️", key=f"delete_pain_{i}", help="Delete this pain point"):
-                        st.session_state.pain_points.pop(i)
-                        if st.session_state.editing_pain_index == i:
-                            st.session_state.editing_pain_index = None
-                        set_inline_notice("pain", "success", "Pain point removed.")
+                    if st.button("Delete", key=f"delete_{cfg.item_type}_{i}", help=f"Delete this {cfg.item_label}"):
+                        st.session_state[cfg.collection_key].pop(i)
+                        if st.session_state.get(cfg.editing_index_key) == i:
+                            st.session_state[cfg.editing_index_key] = None
+                        set_inline_notice(cfg.item_type, "success", f"{cfg.item_label.capitalize()} removed.")
                         st.rerun()
                     st.markdown('</div>', unsafe_allow_html=True)
 
-                if st.session_state.get("editing_pain_index") == i:
-                    with st.form(f"edit_pain_form_{i}", clear_on_submit=False):
-                        edited_pain = st.text_input(
-                            "Edit this pain point",
-                            value=pain,
-                            key=f"edit_pain_text_{i}",
+                if st.session_state.get(cfg.editing_index_key) == i:
+                    with st.form(f"edit_{cfg.item_type}_form_{i}", clear_on_submit=False):
+                        edited_text = st.text_input(
+                            f"Edit this {cfg.item_label}",
+                            value=item_text,
+                            key=f"edit_{cfg.item_type}_text_{i}",
                         )
                         edit_col1, edit_col2 = st.columns(2)
                         save_edit = edit_col1.form_submit_button("Save changes", use_container_width=True)
@@ -2445,282 +2753,178 @@ def render_pain_points():
 
                     if save_edit:
                         if try_update_collection_item(
-                            collection_key="pain_points",
-                            endpoint="/api/validate/pain-points",
-                            payload_key="pain_points",
-                            item_label="pain point",
-                            scope="pain",
+                            collection_key=cfg.collection_key,
+                            endpoint=cfg.validate_endpoint,
+                            payload_key=cfg.collection_key,
+                            item_label=cfg.item_label,
+                            scope=cfg.item_type,
                             item_index=i,
-                            candidate=edited_pain,
+                            candidate=edited_text,
                         ):
-                            st.session_state.editing_pain_index = None
+                            st.session_state[cfg.editing_index_key] = None
                             st.rerun()
                     if cancel_edit:
-                        st.session_state.editing_pain_index = None
-                        clear_inline_notice("pain")
+                        st.session_state[cfg.editing_index_key] = None
+                        clear_inline_notice(cfg.item_type)
                         st.rerun()
         else:
             render_empty_state(
-                "😓",
-                "No pain points yet",
-                "Add your first pain point below to get started. Think about frustrations, obstacles, or risks in your work.",
+                cfg.empty_icon,
+                cfg.empty_title,
+                cfg.empty_description,
                 "Press Enter to add quickly."
             )
 
-        st.markdown("#### Add a new pain point:")
+        st.markdown(f"#### {cfg.add_label}:")
         st.markdown('<div class="composer-hint">Power composer: Enter adds. Cmd/Ctrl+Enter validates. Esc cancels edit.</div>', unsafe_allow_html=True)
-        with st.form("add_pain_form", clear_on_submit=False):
-            new_pain = st.text_input(
-                "Describe a specific pain, frustration, or obstacle you experience:",
-                placeholder="Example: Spending hours manually consolidating data from multiple spreadsheets instead of focusing on analysis...",
-                key="new_pain_input",
-                help="Press Enter to add this pain point quickly.",
+        with st.form(f"add_{cfg.item_type}_form", clear_on_submit=False):
+            new_text = st.text_input(
+                f"Describe a specific {cfg.item_label}:",
+                placeholder=cfg.add_placeholder,
+                key=cfg.new_input_key,
+                help=f"Press Enter to add this {cfg.item_label} quickly.",
             )
-            add_pain_submitted = st.form_submit_button("➕ Add Pain Point")
+            add_submitted = st.form_submit_button(f"Add {cfg.item_label.capitalize()}")
 
-        if add_pain_submitted:
+        if add_submitted:
             if try_add_collection_item(
-                collection_key="pain_points",
-                endpoint="/api/validate/pain-points",
-                payload_key="pain_points",
-                item_label="pain point",
-                scope="pain",
-                candidate=new_pain,
+                collection_key=cfg.collection_key,
+                endpoint=cfg.validate_endpoint,
+                payload_key=cfg.collection_key,
+                item_label=cfg.item_label,
+                scope=cfg.item_type,
+                candidate=new_text,
             ):
-                st.session_state.editing_pain_index = None
-                st.session_state.new_pain_input = ""
+                st.session_state[cfg.editing_index_key] = None
+                st.session_state[cfg.new_input_key] = ""
                 st.rerun()
 
-        render_inline_notice("pain")
+        render_inline_notice(cfg.item_type)
 
-        # Validate all pain points
+        # Validate collection (cached to avoid redundant API calls on every render)
         validation_result = None
-        if len(st.session_state.pain_points) >= 2:
-            validation_result = call_api("/api/validate/pain-points", "POST", {
-                "pain_points": st.session_state.pain_points
-            })
+        if len(items) >= 2:
+            points_tuple = tuple(items)
+            validation_result = cfg.validate_cached_fn(get_content_hash(str(points_tuple)), points_tuple)
 
-        if st.button("✅ Validate Now (Cmd/Ctrl+Enter)", key="pain_validate_now"):
-            if len(st.session_state.pain_points) >= 2:
-                validation_result = call_api("/api/validate/pain-points", "POST", {
-                    "pain_points": st.session_state.pain_points
-                })
-            else:
-                render_validation_message("warning", "Add at least 2 pain points to run validation.")
+        if st.button("Validate now (Cmd/Ctrl+Enter)", key=f"{cfg.item_type}_validate_now"):
+            if len(items) < 2:
+                render_validation_message("warning", f"Add at least 2 {cfg.item_label}s to run validation.")
 
         if validation_result and "error" not in validation_result:
-            st.session_state.pains_validated = validation_result.get("valid", False)
-
-            if validation_result.get("overall_feedback"):
-                for feedback in validation_result["overall_feedback"]:
-                    render_validation_message("warning", feedback)
-
+            st.session_state[cfg.validated_key] = validation_result.get("valid", False)
+            for feedback in validation_result.get("overall_feedback", []):
+                render_validation_message("warning", feedback)
             independence = validation_result.get("independence_check", {})
             if independence and not independence.get("independent", True):
-                issues = independence.get("issues", [])
-                for issue in issues:
+                for issue in independence.get("issues", []):
                     render_validation_message("error", issue.get("message", ""))
-        elif len(st.session_state.pain_points) < 2:
-            st.session_state.pains_validated = False
+        elif len(items) < 2:
+            st.session_state[cfg.validated_key] = False
 
         if remaining > 0:
-            if st.button(f"🤖 Get Suggestions for {remaining} More Pain Points", key="pain_suggestions"):
+            if st.button(f"Get suggestions for {remaining} more {cfg.item_label}s", key=f"{cfg.item_type}_suggestions"):
                 with st.spinner("Getting suggestions..."):
                     suggestions = call_api("/api/suggestions", "POST", {
-                        "step": "pains",
+                        "step": cfg.suggestions_step_name,
                         "job_description": st.session_state.job_description,
-                        "existing_items": st.session_state.pain_points,
+                        "existing_items": items,
                         "count_needed": remaining
                     })
                     if "error" not in suggestions:
                         st.info(suggestions.get("suggestions", "No suggestions available."))
 
         st.markdown("---")
-        can_proceed = len(st.session_state.pain_points) >= 7 and st.session_state.pains_validated
+        can_proceed = len(items) >= cfg.min_required and st.session_state.get(cfg.validated_key, False)
         render_step_actions(
-            back_label="⬅️ Back to Job Description",
-            back_key="pain_back",
-            back_step=1,
-            next_label="Continue to Gain Points ➡️",
-            next_key="pain_next",
-            next_step=3,
+            back_label=cfg.back_label,
+            back_key=cfg.back_key,
+            back_step=cfg.back_step,
+            next_label=cfg.next_label,
+            next_key=cfg.next_key,
+            next_step=cfg.next_step,
             next_disabled=not can_proceed,
         )
 
         if not can_proceed:
-            st.caption(f"Add {max(0, 7 - len(st.session_state.pain_points))} more unique pain points to continue.")
+            st.caption(f"Add {max(0, cfg.min_required - len(items))} more unique {cfg.item_label}s to continue.")
         st.markdown("</div>", unsafe_allow_html=True)
+
+
+_PAIN_STEP_CONFIG = _ItemStepConfig(
+    collection_key="pain_points",
+    item_label="pain point",
+    item_type="pain",
+    validate_endpoint="/api/validate/pain-points",
+    validate_cached_fn=lambda h, t: validate_pain_points_cached(h, t),
+    editing_index_key="editing_pain_index",
+    new_input_key="new_pain_input",
+    validated_key="pains_validated",
+    min_required=7,
+    step_heading="## Step 2: Identify Pain Points",
+    step_title="Step 2 Focus",
+    focus_prompt="Capture distinct, root-cause pains rather than vague complaints.",
+    checklist_tail=["Keep each pain independent", "Describe observable impact"],
+    main_question="What obstacles and frustrations do you face in this work?",
+    add_label="Add a new pain point",
+    add_placeholder="Example: Spending hours manually consolidating data from multiple spreadsheets instead of focusing on analysis...",
+    empty_icon="P",
+    empty_title="No pain points added",
+    empty_description="Add your first pain point below to get started. Think about frustrations, obstacles, or risks in your work.",
+    tip_step_name="pains",
+    suggestions_step_name="pains",
+    back_label="Back to Job Description",
+    back_key="pain_back",
+    back_step=1,
+    next_label="Continue to Gain Points",
+    next_key="pain_next",
+    next_step=3,
+)
+
+_GAIN_STEP_CONFIG = _ItemStepConfig(
+    collection_key="gain_points",
+    item_label="gain point",
+    item_type="gain",
+    validate_endpoint="/api/validate/gain-points",
+    validate_cached_fn=lambda h, t: validate_gain_points_cached(h, t),
+    editing_index_key="editing_gain_index",
+    new_input_key="new_gain_input",
+    validated_key="gains_validated",
+    min_required=8,
+    step_heading="## Step 3: Identify Gain Points",
+    step_title="Step 3 Focus",
+    focus_prompt="Define gains as concrete outcomes, not generic wishes.",
+    checklist_tail=["Keep each gain independent", "Describe user-visible benefit"],
+    main_question="What outcomes and benefits do you desire from your work?",
+    add_label="Add a new gain point",
+    add_placeholder="Example: Having real-time visibility into project progress to make confident resource allocation decisions...",
+    empty_icon="G",
+    empty_title="No gain points added",
+    empty_description="Add your first gain point below to get started. Think about desired outcomes and benefits you want from your work.",
+    tip_step_name="gains",
+    suggestions_step_name="gains",
+    back_label="Back to Pain Points",
+    back_key="gain_back",
+    back_step=2,
+    next_label="Continue to Review",
+    next_key="gain_next",
+    next_step=4,
+)
+
+
+def render_pain_points():
+    """Render the pain points step."""
+    _render_item_collection_step(_PAIN_STEP_CONFIG)
 
 
 def render_gain_points():
     """Render the gain points step."""
-    st.markdown("## Step 3: Identify Gain Points 🌟")
-    tip = get_coaching_tip("gains")
-    remaining = max(0, 8 - len(st.session_state.gain_points))
-
-    main_col, rail_col = st.columns([2.05, 1], gap="large")
-    with rail_col:
-        render_step_rail(
-            step_title="Step 3 Focus",
-            focus_prompt="Define gains as concrete outcomes, not generic wishes.",
-            checks=[
-                f"{len(st.session_state.gain_points)}/8 captured",
-                "Keep each gain independent",
-                "Describe user-visible benefit",
-            ],
-            tip=tip,
-        )
-
-    with main_col:
-        st.markdown('<div class="design-main section-reveal">', unsafe_allow_html=True)
-        st.markdown("### What outcomes and benefits do you desire from your work?")
-        st.markdown(f"You need at least **8 independent** gain points. Currently: **{len(st.session_state.gain_points)}**/8")
-
-        st.markdown("#### Your Gain Points:")
-        if st.session_state.gain_points:
-            for i, gain in enumerate(st.session_state.gain_points):
-                col1, col2, col3 = st.columns([9, 1, 1])
-                with col1:
-                    st.markdown(build_item_card_html(i, gain, "gain"), unsafe_allow_html=True)
-                with col2:
-                    st.markdown('<div class="item-action-group">', unsafe_allow_html=True)
-                    if st.button("✏️", key=f"edit_gain_{i}", help="Edit this gain point"):
-                        st.session_state.editing_gain_index = i
-                        clear_inline_notice("gain")
-                        st.rerun()
-                    st.markdown('</div>', unsafe_allow_html=True)
-                with col3:
-                    st.markdown('<div class="item-action-group">', unsafe_allow_html=True)
-                    if st.button("🗑️", key=f"delete_gain_{i}", help="Delete this gain point"):
-                        st.session_state.gain_points.pop(i)
-                        if st.session_state.editing_gain_index == i:
-                            st.session_state.editing_gain_index = None
-                        set_inline_notice("gain", "success", "Gain point removed.")
-                        st.rerun()
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-                if st.session_state.get("editing_gain_index") == i:
-                    with st.form(f"edit_gain_form_{i}", clear_on_submit=False):
-                        edited_gain = st.text_input(
-                            "Edit this gain point",
-                            value=gain,
-                            key=f"edit_gain_text_{i}",
-                        )
-                        edit_col1, edit_col2 = st.columns(2)
-                        save_edit = edit_col1.form_submit_button("Save changes", use_container_width=True)
-                        cancel_edit = edit_col2.form_submit_button("Cancel", use_container_width=True)
-
-                    if save_edit:
-                        if try_update_collection_item(
-                            collection_key="gain_points",
-                            endpoint="/api/validate/gain-points",
-                            payload_key="gain_points",
-                            item_label="gain point",
-                            scope="gain",
-                            item_index=i,
-                            candidate=edited_gain,
-                        ):
-                            st.session_state.editing_gain_index = None
-                            st.rerun()
-                    if cancel_edit:
-                        st.session_state.editing_gain_index = None
-                        clear_inline_notice("gain")
-                        st.rerun()
-        else:
-            render_empty_state(
-                "🌟",
-                "No gain points yet",
-                "Add your first gain point below to get started. Think about desired outcomes and benefits you want from your work.",
-                "Press Enter to add quickly."
-            )
-
-        st.markdown("#### Add a new gain point:")
-        st.markdown('<div class="composer-hint">Power composer: Enter adds. Cmd/Ctrl+Enter validates. Esc cancels edit.</div>', unsafe_allow_html=True)
-        with st.form("add_gain_form", clear_on_submit=False):
-            new_gain = st.text_input(
-                "Describe a specific outcome or benefit you desire:",
-                placeholder="Example: Having real-time visibility into project progress to make confident resource allocation decisions...",
-                key="new_gain_input",
-                help="Press Enter to add this gain point quickly.",
-            )
-            add_gain_submitted = st.form_submit_button("➕ Add Gain Point")
-
-        if add_gain_submitted:
-            if try_add_collection_item(
-                collection_key="gain_points",
-                endpoint="/api/validate/gain-points",
-                payload_key="gain_points",
-                item_label="gain point",
-                scope="gain",
-                candidate=new_gain,
-            ):
-                st.session_state.editing_gain_index = None
-                st.session_state.new_gain_input = ""
-                st.rerun()
-
-        render_inline_notice("gain")
-
-        validation_result = None
-        if len(st.session_state.gain_points) >= 2:
-            validation_result = call_api("/api/validate/gain-points", "POST", {
-                "gain_points": st.session_state.gain_points
-            })
-
-        if st.button("✅ Validate Now (Cmd/Ctrl+Enter)", key="gain_validate_now"):
-            if len(st.session_state.gain_points) >= 2:
-                validation_result = call_api("/api/validate/gain-points", "POST", {
-                    "gain_points": st.session_state.gain_points
-                })
-            else:
-                render_validation_message("warning", "Add at least 2 gain points to run validation.")
-
-        if validation_result and "error" not in validation_result:
-            st.session_state.gains_validated = validation_result.get("valid", False)
-
-            if validation_result.get("overall_feedback"):
-                for feedback in validation_result["overall_feedback"]:
-                    render_validation_message("warning", feedback)
-
-            independence = validation_result.get("independence_check", {})
-            if independence and not independence.get("independent", True):
-                issues = independence.get("issues", [])
-                for issue in issues:
-                    render_validation_message("error", issue.get("message", ""))
-        elif len(st.session_state.gain_points) < 2:
-            st.session_state.gains_validated = False
-
-        if remaining > 0:
-            if st.button(f"🤖 Get Suggestions for {remaining} More Gain Points", key="gain_suggestions"):
-                with st.spinner("Getting suggestions..."):
-                    suggestions = call_api("/api/suggestions", "POST", {
-                        "step": "gains",
-                        "job_description": st.session_state.job_description,
-                        "existing_items": st.session_state.gain_points,
-                        "count_needed": remaining
-                    })
-                    if "error" not in suggestions:
-                        st.info(suggestions.get("suggestions", "No suggestions available."))
-
-        st.markdown("---")
-        can_proceed = len(st.session_state.gain_points) >= 8 and st.session_state.gains_validated
-        render_step_actions(
-            back_label="⬅️ Back to Pain Points",
-            back_key="gain_back",
-            back_step=2,
-            next_label="Continue to Review ➡️",
-            next_key="gain_next",
-            next_step=4,
-            next_disabled=not can_proceed,
-        )
-
-        if not can_proceed:
-            st.caption(f"Add {max(0, 8 - len(st.session_state.gain_points))} more unique gain points to continue.")
-        st.markdown("</div>", unsafe_allow_html=True)
+    _render_item_collection_step(_GAIN_STEP_CONFIG)
 
 
 def render_review():
     """Render the review and download page."""
-    st.markdown("## Step 4: Review & Download 📋")
+    st.markdown("## Step 4: Review and Export")
     tip = get_coaching_tip("review")
 
     main_col, rail_col = st.columns([2.05, 1], gap="large")
@@ -2739,7 +2943,7 @@ def render_review():
     with main_col:
         st.markdown("""
             <div class="success-banner section-reveal stagger-2">
-                <h2>🎉 Congratulations!</h2>
+                <h2>Canvas ready for publication</h2>
                 <p>Your canvas is complete. Review below, then download your document.</p>
             </div>
         """, unsafe_allow_html=True)
@@ -2748,7 +2952,7 @@ def render_review():
         safe_job_desc = html.escape(st.session_state.job_description)
         st.markdown(f"""
             <div class="summary-section section-reveal">
-                <h3>🎯 Core Job Statement</h3>
+                <h3>Core Job Statement</h3>
                 <p>{safe_job_desc}</p>
             </div>
         """, unsafe_allow_html=True)
@@ -2757,7 +2961,7 @@ def render_review():
         with pains_col:
             st.markdown(f"""
                 <section class="publish-section section-reveal">
-                    <h4>😓 Pain Signals ({len(st.session_state.pain_points)})</h4>
+                    <h4>Pain Signals ({len(st.session_state.pain_points)})</h4>
                 </section>
             """, unsafe_allow_html=True)
             for i, pain in enumerate(st.session_state.pain_points):
@@ -2766,7 +2970,7 @@ def render_review():
         with gains_col:
             st.markdown(f"""
                 <section class="publish-section section-reveal">
-                    <h4>🌟 Gain Signals ({len(st.session_state.gain_points)})</h4>
+                    <h4>Gain Signals ({len(st.session_state.gain_points)})</h4>
                 </section>
             """, unsafe_allow_html=True)
             for i, gain in enumerate(st.session_state.gain_points):
@@ -2779,34 +2983,32 @@ def render_review():
         col1, col2 = st.columns([1, 1])
 
         with col1:
-            if st.button("⬅️ Back to Edit", use_container_width=True):
+            if st.button("Back to Edit", use_container_width=True):
                 st.session_state.step = 3
                 st.rerun()
 
         with col2:
             try:
-                with httpx.Client(timeout=30.0) as client:
-                    response = client.post(
-                        f"{API_BASE_URL}/api/generate-document",
-                        json={
-                            "job_description": st.session_state.job_description,
-                            "pain_points": st.session_state.pain_points,
-                            "gain_points": st.session_state.gain_points,
-                            "title": "Value Proposition Canvas"
-                        }
+                response = get_http_client().post(
+                    f"{API_BASE_URL}/api/generate-document",
+                    json={
+                        "job_description": st.session_state.job_description,
+                        "pain_points": st.session_state.pain_points,
+                        "gain_points": st.session_state.gain_points,
+                        "title": "Value Proposition Canvas"
+                    }
+                )
+                if response.status_code == 200:
+                    st.download_button(
+                        label="Download Word document",
+                        data=response.content,
+                        file_name="Value_Proposition_Canvas.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True,
+                        type="primary"
                     )
-
-                    if response.status_code == 200:
-                        st.download_button(
-                            label="📥 Download Word Document",
-                            data=response.content,
-                            file_name="Value_Proposition_Canvas.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            use_container_width=True,
-                            type="primary"
-                        )
-                    else:
-                        st.error("Failed to generate document. Please try again.")
+                else:
+                    st.error("Failed to generate document. Please try again.")
             except Exception as e:
                 st.error(f"Error connecting to server: {str(e)}")
                 st.info("Make sure the backend server is running: `uvicorn app.main:app --reload --port 8000`")
@@ -2814,23 +3016,9 @@ def render_review():
     
     # Start over option
     st.markdown("---")
-    if st.button("🔄 Start a New Canvas", use_container_width=True):
-        # Clear saved session file
+    if st.button("Start a new canvas", use_container_width=True):
         clear_saved_session()
-        # Reset all session state
-        st.session_state.step = 0
-        st.session_state.job_description = ""
-        st.session_state.pain_points = []
-        st.session_state.gain_points = []
-        st.session_state.job_validated = False
-        st.session_state.pains_validated = False
-        st.session_state.gains_validated = False
-        st.session_state.editing_pain_index = None
-        st.session_state.editing_gain_index = None
-        st.session_state.new_pain_input = ""
-        st.session_state.new_gain_input = ""
-        clear_inline_notice("pain")
-        clear_inline_notice("gain")
+        reset_session_state(preserve_theme=True)
         st.session_state.show_restore_prompt = False
         st.rerun()
 
