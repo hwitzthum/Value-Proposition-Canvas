@@ -19,6 +19,7 @@ os.environ["RATE_LIMIT_AUTH"] = "1000/minute"  # Effectively disable rate limiti
 os.environ["RATE_LIMIT_REGISTER"] = "1000/hour"
 os.environ["RATE_LIMIT_CANVAS"] = "1000/minute"
 os.environ["RATE_LIMIT_ADMIN"] = "1000/minute"
+os.environ["INACTIVITY_TIMEOUT_MINUTES"] = "30"
 
 from app.database import Base, get_db  # noqa: E402
 from app.models import User, UserSession, Canvas  # noqa: E402

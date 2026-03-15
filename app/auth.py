@@ -3,6 +3,8 @@ Authentication and session management.
 - Password hashing with bcrypt (12 rounds)
 - Session-based auth with secure token generation
 - Account lockout after 5 failed attempts (15-minute lock)
+- Inactivity timeout for sessions
+- Status transition enforcement
 - FastAPI dependency for extracting current user from Bearer token
 """
 
@@ -51,9 +53,35 @@ if SESSION_EXPIRY_HOURS <= 0:
     raise ValueError(
         f"SESSION_EXPIRY_HOURS must be positive, got {SESSION_EXPIRY_HOURS}"
     )
+
+INACTIVITY_TIMEOUT_MINUTES = int(os.getenv("INACTIVITY_TIMEOUT_MINUTES", "30"))
+if INACTIVITY_TIMEOUT_MINUTES <= 0:
+    raise ValueError(
+        f"INACTIVITY_TIMEOUT_MINUTES must be positive, got {INACTIVITY_TIMEOUT_MINUTES}"
+    )
+
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
 
+# ---------------------------------------------------------------------------
+# Status transition rules
+# ---------------------------------------------------------------------------
+VALID_TRANSITIONS = {
+    "pending": {"active", "declined"},
+    "active": {"paused"},
+    "paused": {"active"},
+    # declined is a dead end — no transitions out
+}
+
+
+def validate_status_transition(current: str, target: str) -> bool:
+    """Check if a status transition is allowed."""
+    return target in VALID_TRANSITIONS.get(current, set())
+
+
+# ---------------------------------------------------------------------------
+# Session helpers
+# ---------------------------------------------------------------------------
 
 def create_session(db: Session, user: User, ip_address: Optional[str] = None) -> str:
     """Create a new session token for the user."""
@@ -93,8 +121,30 @@ def invalidate_session(db: Session, token: str) -> bool:
     return result.rowcount > 0
 
 
-def get_session_user(db: Session, token: str) -> Optional[User]:
-    """Look up a user by session token. Returns None if expired or missing."""
+def invalidate_all_user_sessions(db: Session, user_id) -> int:
+    """Delete all sessions for a user. Returns count deleted."""
+    result = db.execute(
+        delete(UserSession).where(UserSession.user_id == user_id)
+    )
+    db.commit()
+    return result.rowcount
+
+
+def invalidate_other_sessions(db: Session, user_id, keep_token: str) -> int:
+    """Delete all sessions for a user except the current one."""
+    result = db.execute(
+        delete(UserSession).where(
+            UserSession.user_id == user_id,
+            UserSession.token != keep_token,
+        )
+    )
+    db.commit()
+    return result.rowcount
+
+
+def get_active_session(db: Session, token: str) -> Optional[UserSession]:
+    """Look up a session by token. Returns None if expired, inactive, or missing.
+    Updates last_activity_at on success."""
     session = (
         db.query(UserSession)
         .filter(UserSession.token == token)
@@ -103,15 +153,38 @@ def get_session_user(db: Session, token: str) -> Optional[User]:
     if not session:
         return None
 
+    now = datetime.now(timezone.utc)
+
+    # Check absolute expiry
     expires = session.expires_at
     if expires.tzinfo is None:
         expires = expires.replace(tzinfo=timezone.utc)
-    if expires < datetime.now(timezone.utc):
-        # Expired – clean it up lazily
+    if expires < now:
         db.delete(session)
         db.commit()
         return None
 
+    # Check inactivity timeout
+    last_activity = session.last_activity_at
+    if last_activity.tzinfo is None:
+        last_activity = last_activity.replace(tzinfo=timezone.utc)
+    if last_activity + timedelta(minutes=INACTIVITY_TIMEOUT_MINUTES) < now:
+        db.delete(session)
+        db.commit()
+        return None
+
+    # Update last_activity_at
+    session.last_activity_at = now
+    db.commit()
+
+    return session
+
+
+def get_session_user(db: Session, token: str) -> Optional[User]:
+    """Look up a user by session token. Returns None if expired or missing."""
+    session = get_active_session(db, token)
+    if not session:
+        return None
     return session.user
 
 
@@ -148,7 +221,7 @@ def is_account_locked(user: User) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# FastAPI dependency – extract current user from Bearer token
+# FastAPI dependencies – extract current user from Bearer token
 # ---------------------------------------------------------------------------
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -164,7 +237,36 @@ async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    """Dependency: returns the authenticated user or raises 401."""
+    """Dependency: returns the authenticated user or raises 401.
+    Also enforces must_change_password — raises 403 if set."""
+    if credentials is None:
+        raise _AUTH_ERROR
+
+    user = get_session_user(db, credentials.credentials)
+    if user is None:
+        raise _AUTH_ERROR
+
+    if user.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Account is {user.status}. Contact an administrator.",
+        )
+
+    if user.must_change_password:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Password change required.",
+        )
+
+    return user
+
+
+async def get_current_user_allow_password_change(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    """Like get_current_user but allows users with must_change_password.
+    Used by the change-password and logout endpoints."""
     if credentials is None:
         raise _AUTH_ERROR
 

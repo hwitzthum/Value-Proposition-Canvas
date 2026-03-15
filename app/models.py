@@ -81,6 +81,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     status = Column(String(20), nullable=False, default="pending", index=True)
     is_admin = Column(Boolean, default=False, nullable=False)
+    must_change_password = Column(Boolean, default=False, nullable=False)
 
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
@@ -112,6 +113,7 @@ class UserSession(Base):
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     ip_address = Column(String(45), nullable=True)
+    last_activity_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
     # Relationships
     user = relationship("User", back_populates="sessions")

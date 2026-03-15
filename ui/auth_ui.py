@@ -1,6 +1,6 @@
 """
 Authentication UI components for Streamlit.
-Handles login, registration, pending/blocked status screens.
+Handles login, registration, pending/blocked status screens, password change.
 """
 
 import os
@@ -43,6 +43,18 @@ def check_auth() -> bool:
         if resp.status_code == 200:
             st.session_state["auth_user"] = resp.json()
             return True
+        elif resp.status_code == 401:
+            # Session expired (possibly due to inactivity)
+            st.session_state["session_expired"] = True
+        elif resp.status_code == 403:
+            # Account paused/declined — preserve user info for status page
+            detail = resp.json().get("detail", "")
+            if "paused" in detail.lower():
+                st.session_state["auth_user"] = {"status": "paused"}
+                return True
+            elif "declined" in detail.lower():
+                st.session_state["auth_user"] = {"status": "declined"}
+                return True
     except Exception:
         pass
 
@@ -69,6 +81,23 @@ def logout():
     st.rerun()
 
 
+def change_password_request(token: str, current_password: str, new_password: str) -> dict:
+    """Call the change-password API endpoint."""
+    try:
+        resp = httpx.post(
+            f"{API_BASE_URL}/api/auth/change-password",
+            json={
+                "current_password": current_password,
+                "new_password": new_password,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15.0,
+        )
+        return {"status_code": resp.status_code, **resp.json()}
+    except Exception as e:
+        return {"status_code": 0, "detail": f"Connection error: {e}"}
+
+
 def _password_strength(password: str) -> tuple:
     """Returns (score 0-4, label, color, width%)."""
     score = 0
@@ -92,8 +121,29 @@ def _password_strength(password: str) -> tuple:
     return score, labels[score], colors[score], score * 25
 
 
+def _render_password_strength(password: str):
+    """Render the password strength meter."""
+    if not password:
+        return
+    score, label, color, width = _password_strength(password)
+    st.markdown(
+        f'<div class="pw-strength">'
+        f'<div class="pw-strength-bar">'
+        f'<div class="pw-strength-fill" style="width:{width}%;background:{color}"></div>'
+        f'</div>'
+        f'<div class="pw-strength-text" style="color:{color}">{label}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_login_page():
     """Render the login/register page."""
+    # Show session expiry warning
+    if st.session_state.get("session_expired"):
+        st.warning("Your session has expired due to inactivity. Please sign in again.")
+        st.session_state.pop("session_expired", None)
+
     st.markdown("""
     <div class="auth-container">
         <h1>Value Proposition Canvas</h1>
@@ -120,6 +170,8 @@ def render_login_page():
                     if result.get("token"):
                         st.session_state["auth_token"] = result["token"]
                         st.session_state["auth_user"] = result.get("user")
+                        if result.get("must_change_password"):
+                            st.session_state["must_change_password"] = True
                         st.rerun()
                     else:
                         st.error(result.get("detail", "Login failed."))
@@ -133,17 +185,7 @@ def render_login_page():
         )
 
         # Password strength meter (updates live outside form)
-        if reg_password:
-            score, label, color, width = _password_strength(reg_password)
-            st.markdown(
-                f'<div class="pw-strength">'
-                f'<div class="pw-strength-bar">'
-                f'<div class="pw-strength-fill" style="width:{width}%;background:{color}"></div>'
-                f'</div>'
-                f'<div class="pw-strength-text" style="color:{color}">{label}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
+        _render_password_strength(reg_password)
 
         reg_confirm = st.text_input("Confirm Password", type="password", key="reg_confirm")
 

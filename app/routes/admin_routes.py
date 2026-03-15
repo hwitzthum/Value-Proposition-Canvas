@@ -13,10 +13,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
-from ..auth import get_current_admin
+from sqlalchemy import delete
+
+from ..auth import (
+    get_current_admin,
+    hash_password,
+    invalidate_all_user_sessions,
+    validate_status_transition,
+)
 from ..database import get_db
-from ..models import Canvas, User
+from ..models import Canvas, User, UserSession
 from ..schemas import (
+    AdminResetPasswordRequest,
     AdminStatsResponse,
     AdminUserDetail,
     AdminUserListItem,
@@ -109,6 +117,7 @@ async def get_user_detail(
         failed_login_attempts=user.failed_login_attempts,
         locked_until=user.locked_until,
         canvas_count=canvas_count or 0,
+        must_change_password=user.must_change_password,
     )
 
 
@@ -124,7 +133,7 @@ async def update_user_status(
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    """Approve, pause, or decline a user."""
+    """Approve, pause, or decline a user. Enforces valid transitions."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
@@ -132,7 +141,18 @@ async def update_user_status(
     if user.id == admin.id:
         raise HTTPException(status_code=400, detail="Cannot change your own status.")
 
+    # Block admin-on-admin changes
+    if user.is_admin:
+        raise HTTPException(status_code=400, detail="Cannot change another admin's status.")
+
+    # Enforce valid transitions
     old_status = user.status
+    if not validate_status_transition(old_status, data.status):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid transition: {old_status} -> {data.status}.",
+        )
+
     user.status = data.status
 
     if data.status == "active" and old_status == "pending":
@@ -144,6 +164,10 @@ async def update_user_status(
         user.failed_login_attempts = 0
         user.locked_until = None
 
+    # Invalidate sessions on paused/declined
+    if data.status in ("paused", "declined"):
+        invalidate_all_user_sessions(db, user.id)
+
     db.commit()
 
     logger.info(
@@ -151,6 +175,42 @@ async def update_user_status(
         admin.email, user.email, old_status, data.status,
     )
     return MessageResponse(message=f"User status changed to {data.status}.")
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/users/{user_id}/reset-password
+# ---------------------------------------------------------------------------
+@router.post("/users/{user_id}/reset-password", response_model=MessageResponse)
+@limiter.limit(RATE_LIMIT_ADMIN)
+async def reset_user_password(
+    request: Request,
+    user_id: UUID,
+    data: AdminResetPasswordRequest,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin resets a user's password. Sets must_change_password and invalidates sessions."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    if user.id == admin.id:
+        raise HTTPException(status_code=400, detail="Cannot reset your own password via admin endpoint.")
+
+    if user.is_admin:
+        raise HTTPException(status_code=400, detail="Cannot reset another admin's password.")
+
+    user.password_hash = hash_password(data.new_password)
+    user.must_change_password = True
+    user.failed_login_attempts = 0
+    user.locked_until = None
+
+    # Invalidate all sessions atomically with password change
+    db.execute(delete(UserSession).where(UserSession.user_id == user.id))
+    db.commit()
+
+    logger.info("Admin %s reset password for user %s", admin.email, user.email)
+    return MessageResponse(message="Password reset. User must change password on next login.")
 
 
 # ---------------------------------------------------------------------------

@@ -20,8 +20,13 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # ── Auth & Canvas API imports ──
-from auth_ui import check_auth, render_login_page, render_pending_page, render_blocked_page, logout  # noqa: E402
+from auth_ui import (  # noqa: E402
+    check_auth, render_login_page, render_pending_page, render_blocked_page,
+    logout, change_password_request, _render_password_strength,
+)
 from canvas_api import CanvasAPIClient  # noqa: E402
+from admin_api import AdminAPIClient  # noqa: E402
+from admin_ui import render_admin_dashboard, render_admin_user_management  # noqa: E402
 
 # ── Page Configuration ──
 st.set_page_config(
@@ -32,9 +37,15 @@ st.set_page_config(
 )
 
 # ── Load external CSS ──
+_css_parts = []
 _CSS_PATH = Path(__file__).parent / "assets" / "style.css"
 if _CSS_PATH.exists():
-    st.markdown(f"<style>{_CSS_PATH.read_text()}</style>", unsafe_allow_html=True)
+    _css_parts.append(_CSS_PATH.read_text())
+_ADMIN_CSS_PATH = Path(__file__).parent / "assets" / "admin.css"
+if _ADMIN_CSS_PATH.exists():
+    _css_parts.append(_ADMIN_CSS_PATH.read_text())
+if _css_parts:
+    st.markdown(f"<style>{''.join(_css_parts)}</style>", unsafe_allow_html=True)
 
 # ── API Configuration ──
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
@@ -182,6 +193,12 @@ def call_api(endpoint: str, method: str = "GET", data: dict = None) -> dict:
             response = client.post(f"{API_BASE_URL}{endpoint}", json=data, headers=headers)
         if response.status_code == 200:
             return response.json()
+        elif response.status_code == 401:
+            # Session expired — clear auth and trigger rerun
+            st.session_state.pop("auth_token", None)
+            st.session_state.pop("auth_user", None)
+            st.session_state["session_expired"] = True
+            st.rerun()
         elif response.status_code == 429:
             return {"error": "Rate limit exceeded. Please wait before trying again."}
         else:
@@ -1039,6 +1056,98 @@ def _load_canvas_from_db():
 # Main
 # ═══════════════════════════════════════════════════════════════════════════
 
+@st.dialog("Change Password")
+def _change_password_dialog():
+    """Dialog for changing the current user's password."""
+    current = st.text_input("Current Password", type="password", key="cp_current")
+    new_pw = st.text_input("New Password", type="password", key="cp_new",
+                            help="Min 10 chars, upper+lower+digit+special")
+    _render_password_strength(new_pw)
+    confirm = st.text_input("Confirm New Password", type="password", key="cp_confirm")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Change", type="primary", use_container_width=True, key="cp_submit"):
+            if not current or not new_pw:
+                st.error("All fields are required.")
+            elif new_pw != confirm:
+                st.error("Passwords do not match.")
+            else:
+                token = st.session_state.get("auth_token", "")
+                result = change_password_request(token, current, new_pw)
+                if result.get("status_code") == 200:
+                    st.session_state.pop("must_change_password", None)
+                    st.toast("Password changed successfully.")
+                    st.rerun()
+                else:
+                    st.error(result.get("detail", "Password change failed."))
+    with c2:
+        if st.button("Cancel", use_container_width=True, key="cp_cancel"):
+            st.rerun()
+
+
+def _render_forced_password_change():
+    """Full-page password change form when must_change_password is set."""
+    st.markdown("""
+    <div class="auth-container">
+        <h1>Password Change Required</h1>
+        <p>An administrator has reset your password. You must set a new password before continuing.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.form("forced_pw_change"):
+        current = st.text_input("Current Password", type="password")
+        new_pw = st.text_input("New Password", type="password",
+                                help="Min 10 chars, upper+lower+digit+special")
+        confirm = st.text_input("Confirm New Password", type="password")
+        submitted = st.form_submit_button("Change Password", use_container_width=True)
+
+    if new_pw:
+        _render_password_strength(new_pw)
+
+    if submitted:
+        if not current or not new_pw:
+            st.error("All fields are required.")
+        elif new_pw != confirm:
+            st.error("Passwords do not match.")
+        else:
+            token = st.session_state.get("auth_token", "")
+            result = change_password_request(token, current, new_pw)
+            if result.get("status_code") == 200:
+                st.session_state.pop("must_change_password", None)
+                # Explicitly clear the flag in auth_user to avoid stale state
+                if "auth_user" in st.session_state:
+                    st.session_state["auth_user"]["must_change_password"] = False
+                st.session_state.pop("db_canvas_loaded", None)
+                st.toast("Password changed successfully.")
+                st.rerun()
+            else:
+                st.error(result.get("detail", "Password change failed."))
+
+    st.markdown("---")
+    if st.button("Sign Out", use_container_width=True):
+        logout()
+
+
+def _render_canvas_content():
+    """Render the main canvas content (spatial or guided mode)."""
+    render_header()
+
+    if st.session_state.canvas_mode == "spatial":
+        render_spatial_canvas()
+    else:
+        render_guided_mode()
+
+    # Auto-save
+    has_content = (
+        st.session_state.job_description.strip()
+        or len(st.session_state.pain_points) > 0
+        or len(st.session_state.gain_points) > 0
+    )
+    if has_content:
+        _save_canvas_to_db()
+
+
 def main():
     init_session_state()
 
@@ -1057,10 +1166,17 @@ def main():
         render_blocked_page(user_status)
         return
 
+    # Forced password change gate
+    if st.session_state.get("must_change_password") or auth_user.get("must_change_password"):
+        _render_forced_password_change()
+        return
+
     # Load canvas from DB on first load
     if not st.session_state.get("db_canvas_loaded"):
         _load_canvas_from_db()
         st.session_state.db_canvas_loaded = True
+
+    is_admin = auth_user.get("is_admin", False)
 
     # Sidebar
     with st.sidebar:
@@ -1096,28 +1212,29 @@ def main():
         st.checkbox("Large Text", key="pref_large_text")
 
         st.markdown("---")
+        if st.button("Change Password", key="change_pw_btn", use_container_width=True):
+            _change_password_dialog()
         if st.button("Sign Out", key="logout_btn", use_container_width=True):
             logout()
 
     # Apply theme CSS after sidebar sets theme_mode
     apply_theme()
 
-    # Main content
-    render_header()
-
-    if st.session_state.canvas_mode == "spatial":
-        render_spatial_canvas()
+    # Main content — admin gets tabs, non-admin gets canvas directly
+    if is_admin:
+        tab_canvas, tab_admin = st.tabs(["Canvas", "Admin"])
+        with tab_canvas:
+            _render_canvas_content()
+        with tab_admin:
+            token = st.session_state.get("auth_token", "")
+            admin_client = AdminAPIClient(API_BASE_URL, token)
+            admin_tab_dash, admin_tab_users = st.tabs(["Dashboard", "Users"])
+            with admin_tab_dash:
+                render_admin_dashboard(admin_client)
+            with admin_tab_users:
+                render_admin_user_management(admin_client, str(auth_user.get("id", "")))
     else:
-        render_guided_mode()
-
-    # Auto-save
-    has_content = (
-        st.session_state.job_description.strip()
-        or len(st.session_state.pain_points) > 0
-        or len(st.session_state.gain_points) > 0
-    )
-    if has_content:
-        _save_canvas_to_db()
+        _render_canvas_content()
 
 
 if __name__ == "__main__":

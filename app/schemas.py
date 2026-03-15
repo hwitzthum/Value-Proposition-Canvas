@@ -50,6 +50,7 @@ class LoginRequest(BaseModel):
 class AuthResponse(BaseModel):
     token: str
     user: "UserPublic"
+    must_change_password: bool = False
 
 
 class UserPublic(BaseModel):
@@ -58,6 +59,7 @@ class UserPublic(BaseModel):
     display_name: str
     status: str
     is_admin: bool
+    must_change_password: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -125,10 +127,34 @@ class AdminUserDetail(AdminUserListItem):
     approved_at: Optional[datetime] = None
     failed_login_attempts: int = 0
     locked_until: Optional[datetime] = None
+    must_change_password: bool = False
 
 
 class StatusUpdateRequest(BaseModel):
     status: str = Field(..., pattern=r"^(active|paused|declined)$")
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=10, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_password_complexity(cls, v: str) -> str:
+        if not _PASSWORD_PATTERN.match(v):
+            raise ValueError(PASSWORD_RULES)
+        return v
+
+
+class AdminResetPasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=10, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_password_complexity(cls, v: str) -> str:
+        if not _PASSWORD_PATTERN.match(v):
+            raise ValueError(PASSWORD_RULES)
+        return v
 
 
 class AdminStatsResponse(BaseModel):

@@ -1,5 +1,5 @@
 """
-Authentication endpoints: register, login, logout, me.
+Authentication endpoints: register, login, logout, me, change-password.
 Rate-limited at 5/min for auth actions, 3/hour for registration.
 """
 
@@ -15,7 +15,10 @@ from ..auth import (
     bearer_scheme,
     create_session,
     get_current_user,
+    get_current_user_allow_password_change,
     hash_password,
+    invalidate_all_user_sessions,
+    invalidate_other_sessions,
     invalidate_session,
     is_account_locked,
     record_failed_login,
@@ -25,6 +28,7 @@ from ..database import get_db
 from ..models import User
 from ..schemas import (
     AuthResponse,
+    ChangePasswordRequest,
     LoginRequest,
     MessageResponse,
     RegisterRequest,
@@ -48,13 +52,30 @@ RATE_LIMIT_REGISTER = os.getenv("RATE_LIMIT_REGISTER", "3/hour")
 @router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit(RATE_LIMIT_REGISTER)
 async def register(request: Request, data: RegisterRequest, db: Session = Depends(get_db)):
-    """Register a new user. Account starts in 'pending' status until admin approval."""
+    """Register a new user. Account starts in 'pending' status until admin approval.
+    If email belongs to a declined user, resets the record to pending."""
 
-    # Check if email already exists – use uniform message to prevent enumeration
+    # Check if email already exists
     existing = db.query(User).filter(User.email == data.email.lower()).first()
     if existing:
-        # Don't reveal that the email exists
-        logger.info("Registration attempt for existing email: %s", data.email)
+        if existing.status == "declined":
+            # Allow re-registration: reset the declined record
+            existing.password_hash = hash_password(data.password)
+            existing.display_name = data.display_name
+            existing.status = "pending"
+            existing.must_change_password = False
+            existing.approved_by = None
+            existing.approved_at = None
+            existing.failed_login_attempts = 0
+            existing.locked_until = None
+            existing.updated_at = datetime.now(timezone.utc)
+            # Invalidate any stale sessions
+            invalidate_all_user_sessions(db, existing.id)
+            db.commit()
+            logger.info("Declined user re-registered: %s", data.email)
+        else:
+            # Don't reveal that the email exists
+            logger.info("Registration attempt for existing email: %s", data.email)
         return MessageResponse(
             message="If this email is not already registered, you will receive approval notification."
         )
@@ -135,6 +156,7 @@ async def login(request: Request, data: LoginRequest, db: Session = Depends(get_
     return AuthResponse(
         token=token,
         user=UserPublic.model_validate(user),
+        must_change_password=user.must_change_password,
     )
 
 
@@ -144,7 +166,7 @@ async def login(request: Request, data: LoginRequest, db: Session = Depends(get_
 @router.post("/logout", response_model=MessageResponse)
 async def logout(
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_allow_password_change),
     db: Session = Depends(get_db),
 ):
     """Invalidate the current session."""
@@ -161,6 +183,38 @@ async def logout(
 # GET /api/auth/me
 # ---------------------------------------------------------------------------
 @router.get("/me", response_model=UserPublic)
-async def me(user: User = Depends(get_current_user)):
+async def me(user: User = Depends(get_current_user_allow_password_change)):
     """Return the currently authenticated user."""
     return UserPublic.model_validate(user)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/auth/change-password
+# ---------------------------------------------------------------------------
+@router.post("/change-password", response_model=MessageResponse)
+@limiter.limit(RATE_LIMIT_AUTH)
+async def change_password(
+    request: Request,
+    data: ChangePasswordRequest,
+    user: User = Depends(get_current_user_allow_password_change),
+    db: Session = Depends(get_db),
+):
+    """Change the current user's password. Invalidates other sessions."""
+    if not verify_password(data.current_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect.",
+        )
+
+    user.password_hash = hash_password(data.new_password)
+    user.must_change_password = False
+    db.commit()
+
+    # Invalidate all other sessions (keep the current one)
+    auth_header = request.headers.get("Authorization", "")
+    current_token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+    if current_token:
+        invalidate_other_sessions(db, user.id, current_token)
+
+    logger.info("Password changed for user %s", user.email)
+    return MessageResponse(message="Password changed successfully.")
