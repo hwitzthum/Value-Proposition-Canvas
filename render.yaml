@@ -28,6 +28,8 @@ services:
         value: production
       - key: OPENAI_API_KEY
         sync: false  # Set manually in dashboard
+      - key: OPENAI_MODEL
+        value: gpt-5-mini
       - key: API_SECRET_KEY
         generateValue: true
       - key: ALLOWED_ORIGINS
@@ -36,10 +38,16 @@ services:
         value: "24"
       - key: RATE_LIMIT_AUTH
         value: "5/minute"
+      - key: RATE_LIMIT_REGISTER
+        value: "3/hour"
       - key: RATE_LIMIT_AI
         value: "10/minute"
       - key: RATE_LIMIT_VALIDATION
         value: "60/minute"
+      - key: RATE_LIMIT_CANVAS
+        value: "60/minute"
+      - key: RATE_LIMIT_ADMIN
+        value: "30/minute"
 
   # Streamlit Frontend
   - type: web

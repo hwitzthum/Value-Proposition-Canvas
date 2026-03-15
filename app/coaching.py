@@ -81,7 +81,7 @@ class CoachingEngine:
     
     def __init__(self):
         self.api_key = os.getenv("OPENAI_API_KEY")
-        self.model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        self.model = os.getenv("OPENAI_MODEL", "gpt-5-mini")
         self.client = None
         
         if OPENAI_AVAILABLE and self.api_key and self.api_key != "your_api_key_here":
