@@ -108,3 +108,55 @@ class TestAdminUserManagement:
             json={"status": "invalid_status"},
         )
         assert resp.status_code == 422
+
+
+class TestAdminPagination:
+    def test_list_users_with_pagination(self, client, admin_token, db):
+        """Create multiple users and verify pagination."""
+        for i in range(5):
+            user = User(
+                email=f"page{i}@example.com",
+                display_name=f"Page{i}",
+                password_hash=hash_password(f"SecureP@ss{i}!"),
+                status="pending",
+            )
+            db.add(user)
+        db.commit()
+
+        # Limit to 3
+        resp = client.get("/api/admin/users?limit=3", headers=auth_headers(admin_token))
+        assert resp.status_code == 200
+        assert len(resp.json()) == 3
+
+        # Skip 3, get the rest
+        resp = client.get("/api/admin/users?skip=3&limit=10", headers=auth_headers(admin_token))
+        assert resp.status_code == 200
+        # Should have remaining users (5 created + admin + active_user from fixtures)
+        assert len(resp.json()) >= 1
+
+
+class TestAdminStatsOptimized:
+    def test_stats_returns_correct_counts(self, client, admin_token, db):
+        """Verify stats endpoint returns correct counts with optimized query."""
+        test_users = [
+            ("stat_pending1@example.com", "pending"),
+            ("stat_pending2@example.com", "pending"),
+            ("stat_paused1@example.com", "paused"),
+        ]
+        for email, status_val in test_users:
+            user = User(
+                email=email,
+                display_name=f"Stat {status_val}",
+                password_hash=hash_password("SecureP@ss1!"),
+                status=status_val,
+            )
+            db.add(user)
+        db.commit()
+
+        resp = client.get("/api/admin/stats", headers=auth_headers(admin_token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["pending_users"] >= 2
+        assert data["paused_users"] >= 1
+        assert data["active_users"] >= 1  # admin user
+        assert data["total_users"] >= 4

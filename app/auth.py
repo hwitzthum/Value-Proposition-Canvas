@@ -47,12 +47,24 @@ def verify_password(plain: str, hashed: str) -> bool:
 # Session management
 # ---------------------------------------------------------------------------
 SESSION_EXPIRY_HOURS = int(os.getenv("SESSION_EXPIRY_HOURS", "24"))
+if SESSION_EXPIRY_HOURS <= 0:
+    raise ValueError(
+        f"SESSION_EXPIRY_HOURS must be positive, got {SESSION_EXPIRY_HOURS}"
+    )
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
 
 
 def create_session(db: Session, user: User, ip_address: Optional[str] = None) -> str:
     """Create a new session token for the user."""
+    # Lazy cleanup: remove expired sessions for this user
+    db.execute(
+        delete(UserSession).where(
+            UserSession.user_id == user.id,
+            UserSession.expires_at < datetime.now(timezone.utc),
+        )
+    )
+
     token = secrets.token_urlsafe(48)
     session = UserSession(
         user_id=user.id,
@@ -91,7 +103,10 @@ def get_session_user(db: Session, token: str) -> Optional[User]:
     if not session:
         return None
 
-    if session.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+    expires = session.expires_at
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if expires < datetime.now(timezone.utc):
         # Expired – clean it up lazily
         db.delete(session)
         db.commit()
@@ -126,7 +141,10 @@ def is_account_locked(user: User) -> bool:
     """Check if the account is currently locked."""
     if user.locked_until is None:
         return False
-    return user.locked_until.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc)
+    locked = user.locked_until
+    if locked.tzinfo is None:
+        locked = locked.replace(tzinfo=timezone.utc)
+    return locked > datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------

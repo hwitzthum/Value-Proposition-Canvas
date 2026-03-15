@@ -1,1942 +1,58 @@
 """
-Streamlit UI for Value Proposition Canvas Coaching Application.
-A modern, step-by-step wizard that guides users through creating a high-quality canvas.
+Value Proposition Canvas — Streamlit UI.
+Spatial canvas (default) with optional guided mode.
 """
 
 import os
 import html
-import json
 import hashlib
 import logging
-from dataclasses import dataclass, field
 from pathlib import Path
-import streamlit as st
-import streamlit.components.v1 as components
+from typing import Optional
+
 import httpx
-from typing import List, Optional
-import time
-from textwrap import dedent
+import streamlit as st
+
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# ============ Auth & Canvas API imports ============
+# ── Auth & Canvas API imports ──
 from auth_ui import check_auth, render_login_page, render_pending_page, render_blocked_page, logout  # noqa: E402
 from canvas_api import CanvasAPIClient  # noqa: E402
 
-# ============ Session Persistence Configuration ============
-# File-based persistence kept as fallback for unauthenticated/offline mode
-SESSION_FILE = Path.home() / ".value_proposition_canvas_session.json"
-AUTO_SAVE_ENABLED = True
-
-# ============ Theme Configuration ============
-DEFAULT_THEME = "Light"
-THEME_ICONS = {
-    "Light": "Light",
-    "Dark": "Dark",
-    "Sepia": "Sepia",
-    "Ocean": "Ocean",
-}
-THEME_CONFIGS = {
-    "Light": {
-        "color_bg_primary": "#f4f7fb",
-        "color_bg_card": "#ffffff",
-        "color_bg_elevated": "#ffffff",
-        "color_text_primary": "#102a43",
-        "color_text_secondary": "#3f556f",
-        "color_text_muted": "#6f859d",
-        "color_accent_gold": "#2f6fed",
-        "color_accent_gold_light": "#e8f0ff",
-        "color_pain": "#c14f4f",
-        "color_pain_light": "#fdeaea",
-        "color_gain": "#1d7d67",
-        "color_gain_light": "#e5f4ef",
-        "color_success": "#237b58",
-        "color_success_light": "#e6f3ee",
-        "color_warning": "#a56a1f",
-        "color_warning_light": "#fef2e4",
-        "color_error": "#b24343",
-        "color_error_light": "#fde8e8",
-        "color_border": "#d7e1ec",
-        "color_border_light": "#e8eef5",
-        "header_gradient": "linear-gradient(135deg, #f9fbff 0%, #eff4fb 100%)",
-        "header_overlay_a": "rgba(47, 111, 237, 0.08)",
-        "header_overlay_b": "rgba(22, 119, 160, 0.06)",
-        "header_text": "#102a43",
-        "surface_tint": "#f6f9fd",
-        "success_tint": "#ecf6f1",
-        "warning_tint": "#fbf2e7",
-        "primary_hover": "#2358c7",
-        "restore_title": "#8a5a1d",
-        "restore_description": "#627892",
-        "success_text": "#1f5f46",
-        "noise_opacity": "0.01",
-        "coaching_tip_tint": "#f7fafe",
-        "progress_active": "#2f6fed",
-        "progress_active_text": "#ffffff",
-        "progress_active_glow": "rgba(47, 111, 237, 0.15)",
-        "progress_complete": "#237b58",
-        "progress_complete_text": "#ffffff",
-        "progress_upcoming_bg": "#ffffff",
-        "progress_upcoming_border": "#d7e1ec",
-        "progress_upcoming_text": "#6f859d",
-        "font_display": "'Sora', 'Segoe UI', sans-serif",
-        "font_body": "'Manrope', -apple-system, BlinkMacSystemFont, sans-serif",
-        "texture_tint": "rgba(47, 111, 237, 0.07)",
-        "motif_color": "rgba(47, 111, 237, 0.32)",
-        "rail_gradient": "linear-gradient(180deg, #ffffff 0%, #f6f9fd 100%)",
-        "motion_distance": "6px",
-    },
-    "Dark": {
-        "color_bg_primary": "#0f141a",
-        "color_bg_card": "#1b232d",
-        "color_bg_elevated": "#242e3a",
-        "color_text_primary": "#edf3fb",
-        "color_text_secondary": "#c5d2e3",
-        "color_text_muted": "#9fb0c5",
-        "color_accent_gold": "#f1c56d",
-        "color_accent_gold_light": "#3d3220",
-        "color_pain": "#ff8a7a",
-        "color_pain_light": "#3a2324",
-        "color_gain": "#5dc6c6",
-        "color_gain_light": "#1f3338",
-        "color_success": "#6bc08a",
-        "color_success_light": "#1f362a",
-        "color_warning": "#f6c85f",
-        "color_warning_light": "#3c321e",
-        "color_error": "#ef6c7f",
-        "color_error_light": "#3b2229",
-        "color_border": "#324154",
-        "color_border_light": "#283544",
-        "header_gradient": "linear-gradient(145deg, #1d2633 0%, #18202a 50%, #101722 100%)",
-        "header_overlay_a": "rgba(241, 197, 109, 0.18)",
-        "header_overlay_b": "rgba(93, 198, 198, 0.16)",
-        "header_text": "#f8fbff",
-        "surface_tint": "#222c37",
-        "success_tint": "#264433",
-        "warning_tint": "#4b3b22",
-        "primary_hover": "#304055",
-        "restore_title": "#f6d072",
-        "restore_description": "#ebc767",
-        "success_text": "#c5e9d5",
-        "noise_opacity": "0.035",
-        "coaching_tip_tint": "#2e2416",
-        "progress_active": "#f1c56d",
-        "progress_active_text": "#0f141a",
-        "progress_active_glow": "rgba(241, 197, 109, 0.22)",
-        "progress_complete": "#6bc08a",
-        "progress_complete_text": "#0f141a",
-        "progress_upcoming_bg": "#1b232d",
-        "progress_upcoming_border": "#324154",
-        "progress_upcoming_text": "#9fb0c5",
-        "font_display": "'Sora', 'Segoe UI', sans-serif",
-        "font_body": "'Manrope', -apple-system, BlinkMacSystemFont, sans-serif",
-        "texture_tint": "rgba(93, 198, 198, 0.09)",
-        "motif_color": "rgba(241, 197, 109, 0.5)",
-        "rail_gradient": "linear-gradient(160deg, #202a36 0%, #18212a 100%)",
-        "motion_distance": "8px",
-    },
-    "Sepia": {
-        "color_bg_primary": "#f4ece0",
-        "color_bg_card": "#fff9f1",
-        "color_bg_elevated": "#fffdf8",
-        "color_text_primary": "#3b2c22",
-        "color_text_secondary": "#6f5644",
-        "color_text_muted": "#947a67",
-        "color_accent_gold": "#b7863f",
-        "color_accent_gold_light": "#f2dfc2",
-        "color_pain": "#b55a3d",
-        "color_pain_light": "#f6dfd4",
-        "color_gain": "#4f6f5b",
-        "color_gain_light": "#dce8dd",
-        "color_success": "#5a7a4e",
-        "color_success_light": "#e4eddc",
-        "color_warning": "#aa7a2d",
-        "color_warning_light": "#f4e8d1",
-        "color_error": "#9f4633",
-        "color_error_light": "#f7ddd7",
-        "color_border": "#dbc8b1",
-        "color_border_light": "#e8d8c5",
-        "header_gradient": "linear-gradient(145deg, #4a3a2e 0%, #5d4737 50%, #4a3a2e 100%)",
-        "header_overlay_a": "rgba(230, 190, 130, 0.16)",
-        "header_overlay_b": "rgba(120, 150, 120, 0.13)",
-        "header_text": "#fff9f1",
-        "surface_tint": "#f3e9da",
-        "success_tint": "#d4e3cc",
-        "warning_tint": "#efe1c4",
-        "primary_hover": "#6a503f",
-        "restore_title": "#896126",
-        "restore_description": "#9b7340",
-        "success_text": "#4b6b42",
-        "noise_opacity": "0.02",
-        "coaching_tip_tint": "#f5e8d2",
-        "progress_active": "#6a503f",
-        "progress_active_text": "#fff9f1",
-        "progress_active_glow": "rgba(106, 80, 63, 0.18)",
-        "progress_complete": "#5a7a4e",
-        "progress_complete_text": "#fff9f1",
-        "progress_upcoming_bg": "#fff9f1",
-        "progress_upcoming_border": "#dbc8b1",
-        "progress_upcoming_text": "#947a67",
-        "font_display": "'Instrument Sans', 'Segoe UI', sans-serif",
-        "font_body": "'Instrument Sans', -apple-system, BlinkMacSystemFont, sans-serif",
-        "texture_tint": "rgba(151, 115, 63, 0.09)",
-        "motif_color": "rgba(183, 134, 63, 0.42)",
-        "rail_gradient": "linear-gradient(160deg, #fff8ef 0%, #f4e8d8 100%)",
-        "motion_distance": "11px",
-    },
-    "Ocean": {
-        "color_bg_primary": "#edf6f7",
-        "color_bg_card": "#ffffff",
-        "color_bg_elevated": "#f7fbfc",
-        "color_text_primary": "#102c3a",
-        "color_text_secondary": "#385766",
-        "color_text_muted": "#6b8795",
-        "color_accent_gold": "#3c9db3",
-        "color_accent_gold_light": "#d9eef2",
-        "color_pain": "#cf6b4d",
-        "color_pain_light": "#f8e2da",
-        "color_gain": "#1b7f83",
-        "color_gain_light": "#d9f0f1",
-        "color_success": "#2f8660",
-        "color_success_light": "#dff0e8",
-        "color_warning": "#b7862f",
-        "color_warning_light": "#f6ecd9",
-        "color_error": "#b14b53",
-        "color_error_light": "#f9e0e2",
-        "color_border": "#d5e6eb",
-        "color_border_light": "#e4f0f3",
-        "header_gradient": "linear-gradient(145deg, #123447 0%, #1b4d63 50%, #123447 100%)",
-        "header_overlay_a": "rgba(60, 157, 179, 0.2)",
-        "header_overlay_b": "rgba(27, 127, 131, 0.16)",
-        "header_text": "#f3fcff",
-        "surface_tint": "#edf5f7",
-        "success_tint": "#cde8db",
-        "warning_tint": "#f1e4c8",
-        "primary_hover": "#22566e",
-        "restore_title": "#7b5c18",
-        "restore_description": "#8d6e2b",
-        "success_text": "#24563f",
-        "noise_opacity": "0.02",
-        "coaching_tip_tint": "#daf2f4",
-        "progress_active": "#123447",
-        "progress_active_text": "#f3fcff",
-        "progress_active_glow": "rgba(18, 52, 71, 0.2)",
-        "progress_complete": "#2f8660",
-        "progress_complete_text": "#f3fcff",
-        "progress_upcoming_bg": "#ffffff",
-        "progress_upcoming_border": "#d5e6eb",
-        "progress_upcoming_text": "#6b8795",
-        "font_display": "'Sora', 'Segoe UI', sans-serif",
-        "font_body": "'Manrope', -apple-system, BlinkMacSystemFont, sans-serif",
-        "texture_tint": "rgba(60, 157, 179, 0.1)",
-        "motif_color": "rgba(27, 127, 131, 0.4)",
-        "rail_gradient": "linear-gradient(160deg, #ffffff 0%, #e9f5f7 100%)",
-        "motion_distance": "9px",
-    },
-}
-
-STEP_PURPOSES = [
-    ("Welcome", "Set context and align on what you are solving."),
-    ("Job Description", "Define one precise work objective."),
-    ("Pain Points", "Capture friction and failure risk."),
-    ("Gain Points", "Specify outcomes worth pursuing."),
-    ("Review", "Publish a polished reflection canvas."),
-]
-
-# ============ Page Configuration ============
+# ── Page Configuration ──
 st.set_page_config(
-    page_title="Value Proposition Canvas Studio",
+    page_title="Value Proposition Canvas",
     page_icon="📐",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded",
 )
 
-# ============ Custom CSS ============
-st.markdown("""
-<style>
-    /* ═══════════════════════════════════════════════════════════════════════════
-       VALUE PROPOSITION CANVAS - ENTERPRISE LIGHT DESIGN SYSTEM
-       Clean, modern, and delivery-focused
-       ═══════════════════════════════════════════════════════════════════════════ */
-
-    /* Import Distinctive Typography */
-    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&family=Sora:wght@400;500;600;700&display=swap');
-
-    /* CSS Custom Properties - Enterprise Light Baseline */
-    :root {
-        --coaching-tip-tint: #f7fafe;
-        --color-bg-primary: #f4f7fb;
-        --color-bg-card: #ffffff;
-        --color-bg-elevated: #ffffff;
-        --color-text-primary: #102a43;
-        --color-text-secondary: #3f556f;
-        --color-text-muted: #6f859d;
-        --color-accent-gold: #2f6fed;
-        --color-accent-gold-light: #e8f0ff;
-        --color-pain: #c14f4f;
-        --color-pain-light: #fdeaea;
-        --color-gain: #1d7d67;
-        --color-gain-light: #e5f4ef;
-        --color-success: #237b58;
-        --color-success-light: #e6f3ee;
-        --color-warning: #a56a1f;
-        --color-warning-light: #fef2e4;
-        --color-error: #b24343;
-        --color-error-light: #fde8e8;
-        --color-border: #d7e1ec;
-        --color-border-light: #e8eef5;
-        --shadow-sm: 0 1px 2px rgba(16, 42, 67, 0.04), 0 6px 18px rgba(16, 42, 67, 0.05);
-        --shadow-md: 0 8px 24px rgba(16, 42, 67, 0.08);
-        --shadow-lg: 0 14px 36px rgba(16, 42, 67, 0.11);
-        --shadow-glow: 0 6px 18px rgba(47, 111, 237, 0.2);
-        --radius-sm: 8px;
-        --radius-md: 14px;
-        --radius-lg: 20px;
-        --radius-full: 999px;
-        --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-        --transition-smooth: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        --transition-bounce: 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-        --font-display: 'Sora', 'Segoe UI', sans-serif;
-        --font-body: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
-        --texture-tint: rgba(47, 111, 237, 0.07);
-        --motif-color: rgba(47, 111, 237, 0.32);
-        --rail-gradient: linear-gradient(180deg, #ffffff 0%, #f6f9fd 100%);
-        --motion-distance: 6px;
-        --font-scale: 1;
-    }
-
-    /* Global App Styling */
-    .stApp {
-        font-family: var(--font-body);
-        background: var(--color-bg-primary);
-        color: var(--color-text-primary);
-        font-size: calc(1rem * var(--font-scale));
-    }
-
-    /* Subtle noise texture overlay */
-    .stApp::before {
-        content: '';
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        pointer-events: none;
-        opacity: 0.015;
-        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-        mix-blend-mode: soft-light;
-        filter: saturate(0.9) hue-rotate(6deg);
-        z-index: 9999;
-    }
-
-    /* Main container styling */
-    .main .block-container {
-        padding-top: 2.5rem;
-        padding-bottom: 3rem;
-        max-width: 880px;
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       HEADER - Elegant Editorial Hero
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .main-header {
-        text-align: center;
-        padding: 3rem 2rem;
-        background: linear-gradient(145deg, #1a1a2e 0%, #2d2d44 50%, #1a1a2e 100%);
-        border-radius: var(--radius-lg);
-        margin-bottom: 2.5rem;
-        color: #ffffff;
-        position: relative;
-        overflow: hidden;
-        box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255,255,255,0.05);
-    }
-
-    .main-header::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background:
-            radial-gradient(ellipse at 20% 30%, rgba(201, 162, 39, 0.15) 0%, transparent 50%),
-            radial-gradient(ellipse at 80% 70%, rgba(45, 106, 106, 0.12) 0%, transparent 50%);
-        pointer-events: none;
-    }
-
-    .main-header::after {
-        content: '';
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: 1px;
-        background: linear-gradient(90deg, transparent, var(--color-accent-gold), transparent);
-        opacity: 0.4;
-    }
-
-    .main-header .hero-kicker {
-        font-family: var(--font-body);
-        display: inline-flex;
-        align-items: center;
-        gap: 0.4rem;
-        border: 1px solid rgba(255, 255, 255, 0.26);
-        padding: 0.35rem 0.75rem;
-        border-radius: var(--radius-full);
-        font-size: 0.72rem;
-        text-transform: uppercase;
-        letter-spacing: 0.09em;
-        margin-bottom: 0.9rem;
-        position: relative;
-        z-index: 1;
-        background: rgba(255, 255, 255, 0.08);
-    }
-
-    .hero-signature {
-        margin-top: 1.1rem;
-        position: relative;
-        z-index: 1;
-    }
-
-    .hero-signature-line {
-        height: 2px;
-        width: 100px;
-        margin: 0 auto 0.45rem;
-        background: linear-gradient(90deg, transparent, var(--motif-color), transparent);
-    }
-
-    .hero-signature-copy {
-        font-size: 0.8rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        opacity: 0.8;
-    }
-
-    .main-header h1 {
-        font-family: var(--font-display);
-        font-size: 2.75rem;
-        font-weight: 600;
-        letter-spacing: -0.02em;
-        margin-bottom: 0.75rem;
-        position: relative;
-        z-index: 1;
-        line-height: 1.2;
-    }
-
-    .main-header h1::before {
-        content: '';
-        display: block;
-        width: 60px;
-        height: 2px;
-        background: var(--color-accent-gold);
-        margin: 0 auto 1.25rem;
-        opacity: 0.8;
-    }
-
-    .main-header p {
-        font-size: 1.05rem;
-        opacity: 0.85;
-        font-weight: 400;
-        letter-spacing: 0.01em;
-        position: relative;
-        z-index: 1;
-    }
-
-    .theme-switcher {
-        background: var(--color-bg-card);
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-md);
-        padding: 0.75rem 1rem 0.25rem;
-        margin-bottom: 1rem;
-        box-shadow: var(--shadow-sm);
-    }
-
-    .theme-switcher-label {
-        margin-bottom: 0.35rem;
-        font-size: 0.75rem;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: var(--color-text-secondary);
-    }
-
-    .theme-switcher-help {
-        margin-top: 0.15rem;
-        font-size: 0.78rem;
-        color: var(--color-text-muted);
-    }
-
-    .preference-row {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 0.25rem;
-        margin-top: 0.5rem;
-    }
-
-    .design-grid {
-        display: grid;
-        grid-template-columns: minmax(0, 2.05fr) minmax(240px, 1fr);
-        gap: 1.25rem;
-        align-items: start;
-    }
-
-    .design-main {
-        min-width: 0;
-    }
-
-    .design-rail {
-        background: var(--rail-gradient);
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-md);
-        padding: 0.95rem;
-        position: sticky;
-        top: 1rem;
-        box-shadow: var(--shadow-sm);
-    }
-
-    .rail-title {
-        font-size: 0.72rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: var(--color-text-secondary);
-        margin-bottom: 0.45rem;
-        font-weight: 700;
-    }
-
-    .rail-copy {
-        color: var(--color-text-secondary);
-        font-size: 0.86rem;
-        line-height: 1.45;
-        margin-bottom: 0.7rem;
-    }
-
-    .rail-list {
-        margin: 0;
-        padding-left: 1rem;
-        color: var(--color-text-secondary);
-        font-size: 0.84rem;
-        line-height: 1.45;
-    }
-
-    .rail-list li {
-        margin-bottom: 0.3rem;
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       PROGRESS INDICATOR - Refined Step Navigation
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .progress-bar-container {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        padding: 0 0.5rem;
-        margin: 2rem 0 2.5rem;
-    }
-
-    .progress-step-wrapper {
-        display: flex;
-        align-items: center;
-        flex: 1;
-    }
-
-    .progress-step-wrapper:last-child {
-        flex: 0;
-    }
-
-    .progress-step-content {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        min-width: 72px;
-    }
-
-    .progress-indicator {
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 600;
-        font-size: 0.875rem;
-        font-family: var(--font-body);
-        z-index: 2;
-        transition: all var(--transition-smooth);
-        border: 2px solid transparent;
-        background: var(--color-bg-card);
-        color: var(--color-text-muted);
-        box-shadow: var(--shadow-sm);
-    }
-
-    .progress-label {
-        margin-top: 0.625rem;
-        font-size: 0.6875rem;
-        text-align: center;
-        max-width: 80px;
-        font-weight: 500;
-        letter-spacing: 0.02em;
-        text-transform: uppercase;
-        transition: color var(--transition-fast);
-    }
-
-    .progress-line {
-        flex: 1;
-        height: 2px;
-        margin: 0 0.375rem;
-        margin-bottom: 1.75rem;
-        border-radius: 1px;
-        transition: background var(--transition-smooth);
-        background: var(--color-border);
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       COACHING TIP - Elegant Callout Box
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .coaching-tip {
-        background: linear-gradient(135deg, var(--color-accent-gold-light) 0%, var(--coaching-tip-tint) 100%);
-        border-radius: var(--radius-md);
-        padding: 1.375rem 1.5rem;
-        margin: 1.25rem 0;
-        border-left: 3px solid var(--color-accent-gold);
-        position: relative;
-        box-shadow: var(--shadow-sm);
-    }
-
-    .coaching-tip::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        right: 0;
-        width: 80px;
-        height: 80px;
-        background: radial-gradient(circle at top right, rgba(201, 162, 39, 0.08) 0%, transparent 70%);
-        pointer-events: none;
-    }
-
-    .coaching-tip h4 {
-        font-family: var(--font-display);
-        color: var(--color-accent-gold);
-        margin-bottom: 0.625rem;
-        font-size: 0.9375rem;
-        font-weight: 600;
-        letter-spacing: 0.01em;
-    }
-
-    .coaching-tip p {
-        color: var(--color-text-primary);
-        font-size: 0.9375rem;
-        line-height: 1.65;
-        margin: 0;
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       VALIDATION MESSAGES - Refined Feedback States
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .validation-success {
-        background: var(--color-success-light);
-        border: 1px solid rgba(74, 124, 89, 0.25);
-        border-radius: var(--radius-sm);
-        padding: 0.875rem 1.125rem;
-        color: var(--color-success);
-        font-size: 0.875rem;
-        margin: 0.625rem 0;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
-    }
-
-    .validation-success::before {
-        content: '✓';
-        font-weight: 600;
-        font-size: 1rem;
-    }
-
-    .validation-warning {
-        background: var(--color-warning-light);
-        border: 1px solid rgba(184, 134, 11, 0.25);
-        border-radius: var(--radius-sm);
-        padding: 0.875rem 1.125rem;
-        color: var(--color-warning);
-        font-size: 0.875rem;
-        margin: 0.625rem 0;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
-    }
-
-    .validation-warning::before {
-        content: '!';
-        font-weight: 700;
-        font-size: 0.875rem;
-        width: 18px;
-        height: 18px;
-        border-radius: 50%;
-        background: var(--color-warning);
-        color: white;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-    }
-
-    .validation-error {
-        background: var(--color-error-light);
-        border: 1px solid rgba(166, 61, 64, 0.25);
-        border-radius: var(--radius-sm);
-        padding: 0.875rem 1.125rem;
-        color: var(--color-error);
-        font-size: 0.875rem;
-        margin: 0.625rem 0;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
-    }
-
-    .validation-error::before {
-        content: '✕';
-        font-weight: 600;
-        font-size: 0.875rem;
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       QUALITY SCORE - Premium Badge
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .quality-score {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.625rem 1.125rem;
-        border-radius: var(--radius-full);
-        font-weight: 600;
-        font-size: 0.875rem;
-        letter-spacing: 0.01em;
-        box-shadow: var(--shadow-sm);
-    }
-
-    .quality-score.high {
-        background: var(--color-success-light);
-        color: var(--color-success);
-        border: 1px solid rgba(74, 124, 89, 0.2);
-    }
-
-    .quality-score.medium {
-        background: var(--color-warning-light);
-        color: var(--color-warning);
-        border: 1px solid rgba(184, 134, 11, 0.2);
-    }
-
-    .quality-score.low {
-        background: var(--color-error-light);
-        color: var(--color-error);
-        border: 1px solid rgba(166, 61, 64, 0.2);
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       ITEM CARDS - Refined Content Cards
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .item-card {
-        background: var(--color-bg-card);
-        border-radius: var(--radius-sm);
-        padding: 1rem 1.125rem;
-        margin: 0.5rem 0;
-        display: flex;
-        align-items: flex-start;
-        gap: 0.875rem;
-        border: 1px solid var(--color-border-light);
-        box-shadow: var(--shadow-sm);
-        transition: all var(--transition-fast);
-    }
-
-    .item-card:hover {
-        box-shadow: var(--shadow-md);
-        border-color: var(--color-border);
-        transform: translateY(-1px);
-    }
-
-    .item-number {
-        width: 26px;
-        height: 26px;
-        border-radius: 6px;
-        background: var(--color-text-primary);
-        color: white;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 0.75rem;
-        font-weight: 600;
-        flex-shrink: 0;
-        font-family: var(--font-body);
-        letter-spacing: 0.02em;
-    }
-
-    .item-number.pain {
-        background: var(--color-pain);
-    }
-
-    .item-number.gain {
-        background: var(--color-gain);
-    }
-
-    .item-text {
-        flex: 1;
-        font-size: 0.9375rem;
-        color: var(--color-text-primary);
-        line-height: 1.6;
-    }
-
-    .item-metadata {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.4rem;
-        margin-top: 0.55rem;
-    }
-
-    .item-chip {
-        font-size: 0.68rem;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-full);
-        padding: 0.18rem 0.45rem;
-        color: var(--color-text-secondary);
-        background: var(--color-bg-primary);
-    }
-
-    .item-chip.accent {
-        border-color: var(--color-accent-gold);
-        color: var(--color-text-primary);
-        font-weight: 600;
-        background: var(--color-accent-gold-light);
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       BUTTONS - Refined Interactive Elements
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .stButton > button {
-        border-radius: var(--radius-sm);
-        font-weight: 500;
-        font-family: var(--font-body);
-        padding: 0.625rem 1.5rem;
-        min-height: 44px;
-        transition: all var(--transition-smooth);
-        border: 1px solid transparent;
-        letter-spacing: 0.01em;
-    }
-
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: var(--shadow-md);
-    }
-
-    .stButton > button:active {
-        transform: translateY(0);
-    }
-
-    /* Primary button styling */
-    .stButton > button[kind="primary"] {
-        background: var(--color-text-primary);
-        color: white;
-        border-color: var(--color-text-primary);
-    }
-
-    .stButton > button[kind="primary"]:hover {
-        background: #2d2d44;
-        border-color: #2d2d44;
-        box-shadow: var(--shadow-md), var(--shadow-glow);
-    }
-
-    /* Secondary button styling */
-    .stButton > button:not([kind="primary"]) {
-        background: var(--color-bg-card);
-        color: var(--color-text-primary);
-        border-color: var(--color-border);
-    }
-
-    .stButton > button:not([kind="primary"]):hover {
-        background: var(--color-bg-primary);
-        border-color: var(--color-text-secondary);
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       TEXT AREAS - Refined Input Fields
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .stTextArea > div > div > textarea {
-        border-radius: var(--radius-sm);
-        border: 1px solid var(--color-border);
-        font-family: var(--font-body);
-        font-size: 0.9375rem;
-        line-height: 1.6;
-        padding: 0.875rem 1rem;
-        background: var(--color-bg-card);
-        color: var(--color-text-primary);
-        transition: all var(--transition-fast);
-    }
-
-    .stTextArea > div > div > textarea:focus {
-        border-color: var(--color-accent-gold);
-        box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.15);
-        outline: none;
-    }
-
-    .stTextArea > div > div > textarea::placeholder {
-        color: var(--color-text-muted);
-    }
-
-    .stTextInput > div > div > input {
-        border-radius: var(--radius-sm);
-        border: 1px solid var(--color-border);
-        background: var(--color-bg-card);
-        color: var(--color-text-primary);
-        min-height: 44px;
-    }
-
-    .stTextInput > div > div > input:focus {
-        border-color: var(--color-accent-gold);
-        box-shadow: 0 0 0 3px var(--color-accent-gold-light);
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       SUMMARY SECTION - Elegant Content Blocks
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .summary-section {
-        background: linear-gradient(145deg, var(--color-bg-card) 0%, #f8f6f2 100%);
-        border-radius: var(--radius-md);
-        padding: 1.5rem;
-        margin: 1rem 0;
-        border: 1px solid var(--color-border-light);
-        box-shadow: var(--shadow-sm);
-        position: relative;
-    }
-
-    .summary-section::before {
-        content: '';
-        position: absolute;
-        left: 0;
-        top: 0;
-        bottom: 0;
-        width: 3px;
-        background: linear-gradient(180deg, var(--color-accent-gold), var(--color-gain));
-        border-radius: 3px 0 0 3px;
-    }
-
-    .summary-section h3 {
-        font-family: var(--font-display);
-        color: var(--color-text-primary);
-        margin-bottom: 1rem;
-        font-weight: 600;
-        letter-spacing: -0.01em;
-    }
-
-    .summary-section p {
-        color: var(--color-text-secondary);
-        line-height: 1.7;
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       SUCCESS BANNER - Celebratory Completion
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .success-banner {
-        background: linear-gradient(145deg, var(--color-success-light) 0%, #d8e8de 100%);
-        border-radius: var(--radius-md);
-        padding: 2.5rem;
-        text-align: center;
-        margin: 2rem 0;
-        position: relative;
-        overflow: hidden;
-        border: 1px solid rgba(74, 124, 89, 0.15);
-    }
-
-    .success-banner::before {
-        content: '';
-        position: absolute;
-        top: -50%;
-        left: -50%;
-        width: 200%;
-        height: 200%;
-        background: radial-gradient(circle, rgba(74, 124, 89, 0.05) 0%, transparent 50%);
-        pointer-events: none;
-    }
-
-    .success-banner h2 {
-        font-family: var(--font-display);
-        color: var(--color-success);
-        margin-bottom: 0.5rem;
-        font-weight: 600;
-        letter-spacing: -0.01em;
-        position: relative;
-    }
-
-    .success-banner p {
-        color: #3a6348;
-        font-size: 1rem;
-        position: relative;
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       EMPTY STATE - Inviting Placeholder
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .empty-state {
-        background: linear-gradient(145deg, var(--color-bg-card) 0%, #f8f6f2 100%);
-        border: 2px dashed var(--color-border);
-        border-radius: var(--radius-md);
-        padding: 2.5rem 2rem;
-        text-align: center;
-        margin: 1rem 0;
-    }
-
-    .empty-state-icon {
-        font-size: 3rem;
-        margin-bottom: 1rem;
-        opacity: 0.7;
-    }
-
-    .empty-state-title {
-        color: var(--color-text-secondary);
-        font-family: var(--font-display);
-        font-size: 1.0625rem;
-        font-weight: 500;
-        margin-bottom: 0.5rem;
-    }
-
-    .empty-state-description {
-        color: var(--color-text-muted);
-        font-size: 0.875rem;
-        line-height: 1.6;
-    }
-
-    .empty-state-hint {
-        margin-top: 0.75rem;
-        color: var(--color-text-secondary);
-        font-size: 0.8125rem;
-        font-weight: 500;
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       RESTORE BANNER - Session Recovery
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .restore-banner {
-        background: linear-gradient(145deg, var(--color-warning-light) 0%, #f9f1dc 100%);
-        border: 1px solid rgba(184, 134, 11, 0.25);
-        border-radius: var(--radius-md);
-        padding: 1.25rem 1.5rem;
-        margin-bottom: 1.5rem;
-        position: relative;
-    }
-
-    .restore-banner::before {
-        content: '';
-        position: absolute;
-        left: 0;
-        top: 0;
-        bottom: 0;
-        width: 3px;
-        background: var(--color-warning);
-        border-radius: 3px 0 0 3px;
-    }
-
-    .restore-banner-title {
-        color: var(--color-warning);
-        font-family: var(--font-display);
-        font-weight: 600;
-        margin-bottom: 0.375rem;
-        font-size: 1rem;
-    }
-
-    .restore-banner-description {
-        color: var(--color-text-secondary);
-        font-size: 0.875rem;
-        line-height: 1.5;
-    }
-
-    .restore-banner-hint {
-        margin-top: 0.5rem;
-        font-size: 0.8125rem;
-        color: var(--color-text-secondary);
-    }
-
-    .step-actions-bar {
-        position: sticky;
-        bottom: 0.5rem;
-        z-index: 50;
-        margin-top: 1rem;
-        padding: 0.9rem;
-        border-radius: var(--radius-md);
-        background: var(--color-bg-elevated);
-        border: 1px solid var(--color-border);
-        backdrop-filter: blur(8px);
-        box-shadow: var(--shadow-md);
-    }
-
-    .composer-hint {
-        color: var(--color-text-muted);
-        font-size: 0.78rem;
-        margin-top: -0.15rem;
-        margin-bottom: 0.45rem;
-    }
-
-    .milestone-card {
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-md);
-        background: var(--color-bg-card);
-        padding: 0.85rem 1rem;
-        margin: 0.65rem 0 0.9rem;
-        box-shadow: var(--shadow-sm);
-    }
-
-    .milestone-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        font-size: 0.84rem;
-        color: var(--color-text-secondary);
-        margin-bottom: 0.35rem;
-    }
-
-    .milestone-title {
-        font-weight: 700;
-        color: var(--color-text-primary);
-    }
-
-    .milestone-purpose {
-        font-size: 0.82rem;
-        color: var(--color-text-secondary);
-        line-height: 1.4;
-    }
-
-    .publish-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.9rem;
-    }
-
-    .publish-section {
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-md);
-        background: var(--color-bg-card);
-        padding: 0.85rem;
-    }
-
-    .step-actions-bar .stButton > button {
-        width: 100%;
-    }
-
-    .item-action-group .stButton > button {
-        padding: 0.5rem;
-        min-height: 40px;
-        min-width: 40px;
-    }
-
-    .item-edit-row {
-        margin-top: 0.45rem;
-    }
-
-    .section-reveal {
-        animation: sectionFadeUp 0.45s ease both;
-    }
-
-    .stagger-1 { animation-delay: 0.04s; }
-    .stagger-2 { animation-delay: 0.09s; }
-    .stagger-3 { animation-delay: 0.14s; }
-
-    @keyframes sectionFadeUp {
-        from {
-            opacity: 0;
-            transform: translateY(var(--motion-distance));
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       TYPOGRAPHY REFINEMENTS
-       ═══════════════════════════════════════════════════════════════════════════ */
-    h1, h2, h3 {
-        font-family: var(--font-display);
-        color: var(--color-text-primary);
-        letter-spacing: -0.01em;
-    }
-
-    h2 {
-        font-weight: 600;
-        margin-bottom: 1rem;
-    }
-
-    h3 {
-        font-weight: 500;
-        color: var(--color-text-secondary);
-    }
-
-    h4 {
-        font-family: var(--font-body);
-        font-weight: 600;
-        color: var(--color-text-primary);
-        letter-spacing: 0.01em;
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       STREAMLIT OVERRIDES - Clean Up Default Styling
-       ═══════════════════════════════════════════════════════════════════════════ */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-
-    /* Horizontal rule styling */
-    hr {
-        border: none;
-        height: 1px;
-        background: linear-gradient(90deg, transparent, var(--color-border), transparent);
-        margin: 1.5rem 0;
-    }
-
-    /* Expander styling */
-    .streamlit-expanderHeader {
-        font-family: var(--font-body);
-        font-weight: 500;
-        color: var(--color-text-secondary);
-    }
-
-    /* Caption styling */
-    .stCaption {
-        color: var(--color-text-muted);
-        font-size: 0.8125rem;
-    }
-
-    /* Info/warning boxes */
-    .stAlert {
-        border-radius: var(--radius-sm);
-        border: 1px solid var(--color-border);
-    }
-
-    /* Spinner styling */
-    .stSpinner > div {
-        border-color: var(--color-accent-gold) transparent transparent transparent;
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       ACCESSIBILITY & FOCUS STATES
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .stButton > button:focus {
-        outline: 2px solid var(--color-accent-gold);
-        outline-offset: 2px;
-    }
-
-    .stTextArea > div > div > textarea:focus {
-        outline: none;
-    }
-
-    .stRadio [role="radiogroup"] label {
-        min-height: 40px;
-    }
-
-    .stRadio [role="radio"] {
-        outline-offset: 2px;
-    }
-
-    /* High contrast mode adjustments */
-    @media (prefers-contrast: high) {
-        :root {
-            --color-border: #1a1a2e;
-            --color-text-muted: #3a3a4e;
-        }
-    }
-
-    /* Reduced motion preferences */
-    @media (prefers-reduced-motion: reduce) {
-        * {
-            transition-duration: 0.01ms !important;
-            animation-duration: 0.01ms !important;
-        }
-    }
-
-    @media (max-width: 768px) {
-        .main .block-container {
-            padding-top: 1.25rem;
-            padding-bottom: 2rem;
-        }
-
-        .main-header {
-            padding: 2rem 1.2rem;
-        }
-
-        .main-header h1 {
-            font-size: 2rem;
-        }
-
-        .progress-label {
-            font-size: 0.64rem;
-            max-width: 64px;
-        }
-
-        .progress-step-content {
-            min-width: 62px;
-        }
-
-        .design-grid {
-            grid-template-columns: 1fr;
-        }
-
-        .design-rail {
-            position: static;
-        }
-
-        .publish-grid {
-            grid-template-columns: 1fr;
-        }
-
-        .step-actions-bar {
-            bottom: 0;
-            border-radius: var(--radius-sm);
-            padding: 0.75rem;
-        }
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       AUTO-SAVE INDICATOR - Subtle Feedback
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .auto-save-indicator {
-        position: fixed;
-        bottom: 1.5rem;
-        right: 1.5rem;
-        background: var(--color-success);
-        color: white;
-        padding: 0.5rem 1rem;
-        border-radius: var(--radius-full);
-        font-size: 0.75rem;
-        font-weight: 500;
-        font-family: var(--font-body);
-        box-shadow: var(--shadow-md);
-        animation: fadeInOut 2s ease-in-out;
-        display: flex;
-        align-items: center;
-        gap: 0.375rem;
-    }
-
-    .auto-save-indicator::before {
-        content: '✓';
-    }
-
-    @keyframes fadeInOut {
-        0% { opacity: 0; transform: translateY(10px); }
-        20% { opacity: 1; transform: translateY(0); }
-        80% { opacity: 1; transform: translateY(0); }
-        100% { opacity: 0; transform: translateY(-10px); }
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       DOWNLOAD BUTTON ENHANCEMENT
-       ═══════════════════════════════════════════════════════════════════════════ */
-    .stDownloadButton > button {
-        background: linear-gradient(135deg, var(--color-text-primary) 0%, #2d2d44 100%);
-        border: 1px solid transparent;
-    }
-
-    .stDownloadButton > button:hover {
-        background: linear-gradient(135deg, #2d2d44 0%, var(--color-text-primary) 100%);
-        box-shadow: var(--shadow-lg), var(--shadow-glow);
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════════════
-       ENTERPRISE LIGHT REFINEMENT
-       ═══════════════════════════════════════════════════════════════════════════ */
-    :root {
-        --radius-sm: 8px;
-        --radius-md: 14px;
-        --radius-lg: 20px;
-        --shadow-sm: 0 1px 2px rgba(16, 42, 67, 0.04), 0 6px 18px rgba(16, 42, 67, 0.05);
-        --shadow-md: 0 8px 24px rgba(16, 42, 67, 0.08);
-        --shadow-lg: 0 14px 36px rgba(16, 42, 67, 0.11);
-        --shadow-glow: 0 6px 18px rgba(47, 111, 237, 0.2);
-    }
-
-    .stApp {
-        background: linear-gradient(180deg, #f9fbff 0%, var(--color-bg-primary) 160px);
-    }
-
-    .stApp::before {
-        opacity: 0.008;
-        mix-blend-mode: normal;
-        filter: none;
-    }
-
-    .main .block-container {
-        max-width: 1120px;
-        padding-top: 1.25rem;
-        padding-bottom: 2.5rem;
-    }
-
-    .main-header {
-        text-align: left;
-        padding: 1.9rem 2rem 1.75rem;
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-lg);
-        box-shadow: var(--shadow-sm);
-    }
-
-    .main-header::after {
-        opacity: 0.2;
-    }
-
-    .main-header .hero-kicker {
-        font-size: 0.64rem;
-        letter-spacing: 0.1em;
-        font-weight: 700;
-        color: var(--color-accent-gold);
-        border-color: rgba(47, 111, 237, 0.25);
-        background: var(--color-accent-gold-light);
-    }
-
-    .main-header h1 {
-        font-size: clamp(1.9rem, 3vw, 2.45rem);
-        font-weight: 640;
-        margin-bottom: 0.45rem;
-    }
-
-    .main-header h1::before {
-        margin: 0 0 0.85rem;
-        width: 64px;
-        background: var(--color-accent-gold);
-    }
-
-    .main-header p {
-        max-width: 700px;
-        font-size: 0.98rem;
-        line-height: 1.55;
-        color: var(--color-text-secondary);
-        opacity: 1;
-    }
-
-    .hero-signature {
-        display: flex;
-        align-items: center;
-        gap: 0.6rem;
-        margin-top: 0.95rem;
-    }
-
-    .hero-signature-line {
-        width: 64px;
-        margin: 0;
-        background: linear-gradient(90deg, transparent, var(--motif-color), transparent);
-    }
-
-    .hero-signature-copy {
-        font-size: 0.66rem;
-        letter-spacing: 0.09em;
-        color: var(--color-text-muted);
-        opacity: 1;
-    }
-
-    .theme-switcher,
-    .design-rail,
-    .progress-bar-container,
-    .summary-section,
-    .publish-section,
-    .milestone-card,
-    .restore-banner,
-    .step-actions-bar {
-        border: 1px solid var(--color-border);
-        background: var(--color-bg-card);
-        box-shadow: var(--shadow-sm);
-    }
-
-    .theme-switcher {
-        border-radius: var(--radius-md);
-        padding: 0.9rem 1rem 0.65rem;
-    }
-
-    .theme-switcher-label,
-    .rail-title {
-        font-size: 0.66rem;
-        letter-spacing: 0.1em;
-    }
-
-    .design-rail {
-        border-radius: var(--radius-md);
-        padding: 0.95rem;
-    }
-
-    .progress-bar-container {
-        border-radius: var(--radius-md);
-        padding: 0.95rem 0.75rem 0.75rem;
-        margin: 1.1rem 0 1.55rem;
-    }
-
-    .progress-indicator {
-        width: 36px;
-        height: 36px;
-        border-radius: 10px;
-        font-size: 0.8rem;
-    }
-
-    .progress-label {
-        margin-top: 0.45rem;
-        font-size: 0.62rem;
-        letter-spacing: 0.07em;
-    }
-
-    .coaching-tip {
-        border: 1px solid var(--color-border);
-        border-left: 3px solid var(--color-accent-gold);
-        border-radius: var(--radius-md);
-        background: var(--color-bg-card);
-    }
-
-    .coaching-tip h4 {
-        text-transform: none;
-        font-size: 0.78rem;
-        letter-spacing: 0.03em;
-        color: var(--color-text-secondary);
-    }
-
-    .quality-score {
-        border-radius: 10px;
-        text-transform: none;
-        letter-spacing: 0.01em;
-        font-size: 0.8rem;
-    }
-
-    .item-card {
-        border-radius: 12px;
-        border: 1px solid var(--color-border);
-        background: #ffffff;
-        box-shadow: none;
-    }
-
-    .item-number {
-        width: 26px;
-        height: 26px;
-        border-radius: 6px;
-        font-size: 0.68rem;
-    }
-
-    .item-chip {
-        font-size: 0.61rem;
-        letter-spacing: 0.05em;
-    }
-
-    .item-action-group .stButton > button {
-        font-size: 0.72rem;
-        min-height: 36px;
-        padding: 0.3rem 0.55rem;
-        border-radius: 8px;
-    }
-
-    .stButton > button,
-    .stDownloadButton > button {
-        text-transform: none;
-        letter-spacing: 0.01em;
-        font-weight: 600;
-        font-size: 0.84rem;
-    }
-
-    .stButton > button[kind="primary"],
-    .stDownloadButton > button {
-        background: var(--color-accent-gold);
-        border-color: var(--color-accent-gold);
-        color: #ffffff;
-    }
-
-    .stButton > button[kind="primary"]:hover,
-    .stDownloadButton > button:hover {
-        background: var(--primary_hover, var(--color-accent-gold));
-        border-color: var(--primary_hover, var(--color-accent-gold));
-        box-shadow: var(--shadow-md);
-    }
-
-    .stTextArea > div > div > textarea,
-    .stTextInput > div > div > input {
-        border-radius: 10px;
-        border: 1px solid var(--color-border);
-        background: #ffffff;
-    }
-
-    .stTextArea > div > div > textarea {
-        min-height: 150px;
-    }
-
-    .milestone-card,
-    .summary-section,
-    .restore-banner,
-    .publish-section {
-        border-radius: var(--radius-md);
-    }
-
-    .step-actions-bar {
-        bottom: 0.35rem;
-        border-radius: var(--radius-md);
-        box-shadow: var(--shadow-md);
-    }
-
-    .success-banner {
-        border-radius: var(--radius-lg);
-        padding: 1.95rem 1.5rem;
-        border: 1px solid rgba(35, 123, 88, 0.2);
-        box-shadow: none;
-    }
-
-    .success-banner h2 {
-        font-size: 1.58rem;
-    }
-
-    .publish-section h4 {
-        margin: 0;
-        text-transform: uppercase;
-        letter-spacing: 0.07em;
-        font-size: 0.7rem;
-        color: var(--color-text-secondary);
-    }
-
-    .empty-state {
-        border-width: 1px;
-        border-style: solid;
-        border-color: var(--color-border);
-        border-radius: var(--radius-md);
-        background: #ffffff;
-    }
-
-    .empty-state-icon {
-        width: 52px;
-        height: 52px;
-        margin: 0 auto 0.85rem;
-        border-radius: 12px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 0.95rem;
-        font-weight: 700;
-        letter-spacing: 0.07em;
-        border: 1px solid var(--color-border);
-        color: var(--color-text-secondary);
-        background: var(--color-bg-elevated);
-    }
-
-    @media (max-width: 768px) {
-        .main-header {
-            padding: 1.45rem 1.1rem 1.35rem;
-        }
-
-        .hero-signature {
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 0.35rem;
-        }
-
-        .progress-bar-container {
-            padding: 0.78rem 0.3rem 0.58rem;
-        }
-
-        .progress-step-content {
-            min-width: 56px;
-        }
-
-        .progress-indicator {
-            width: 33px;
-            height: 33px;
-            border-radius: 9px;
-        }
-
-        .progress-label {
-            font-size: 0.56rem;
-            max-width: 56px;
-        }
-
-        .progress-line {
-            margin: 0 0.2rem 1.8rem;
-        }
-
-        .step-actions-bar {
-            padding: 0.68rem;
-        }
-    }
-</style>
-""", unsafe_allow_html=True)
-
-
-def get_active_theme() -> dict:
-    """Get the currently active theme configuration."""
-    theme_name = st.session_state.get("theme_mode", DEFAULT_THEME)
-    return THEME_CONFIGS.get(theme_name, THEME_CONFIGS[DEFAULT_THEME])
-
-
-def render_theme_picker():
-    """Render theme picker UI and update session state."""
-    options = list(THEME_CONFIGS.keys())
-    current = st.session_state.get("theme_mode", DEFAULT_THEME)
-    if current not in THEME_CONFIGS:
-        current = DEFAULT_THEME
-
-    if "theme_picker" not in st.session_state:
-        st.session_state.theme_picker = current
-
-    _, picker_col = st.columns([3, 2])
-    with picker_col:
-        st.markdown('<div class="theme-switcher section-reveal"><div class="theme-switcher-label">Appearance</div>', unsafe_allow_html=True)
-        selected = st.radio(
-            "Theme Mode",
-            options,
-            format_func=lambda mode: THEME_ICONS.get(mode, mode),
-            horizontal=True,
-            label_visibility="collapsed",
-            key="theme_picker",
-            index=options.index(current),
-        )
-        pref_col1, pref_col2, pref_col3 = st.columns(3)
-        with pref_col1:
-            st.session_state.pref_high_contrast = st.checkbox(
-                "High Contrast",
-                key="pref_high_contrast_checkbox",
-            )
-        with pref_col2:
-            st.session_state.pref_reduce_motion = st.checkbox(
-                "Low Motion",
-                key="pref_reduce_motion_checkbox",
-            )
-        with pref_col3:
-            st.session_state.pref_large_text = st.checkbox(
-                "Large Text",
-                key="pref_large_text_checkbox",
-            )
-        st.markdown('<div class="theme-switcher-help">Switch visual mode without losing your progress.</div></div>', unsafe_allow_html=True)
-
-    st.session_state.theme_mode = selected
-
-
-def apply_theme_styles():
-    """Apply dynamic CSS overrides for the selected theme."""
-    theme = get_active_theme()
-    high_contrast = st.session_state.get("pref_high_contrast_checkbox", st.session_state.get("pref_high_contrast", False))
-    reduce_motion = st.session_state.get("pref_reduce_motion_checkbox", st.session_state.get("pref_reduce_motion", False))
-    large_text = st.session_state.get("pref_large_text_checkbox", st.session_state.get("pref_large_text", False))
-
-    st.session_state.pref_high_contrast = bool(high_contrast)
-    st.session_state.pref_reduce_motion = bool(reduce_motion)
-    st.session_state.pref_large_text = bool(large_text)
-
-    high_contrast_styles = """
-    :root {
-        --color-border: #000000;
-        --color-border-light: #111111;
-        --color-text-muted: #1d1d1d;
-    }
-    .stButton > button, .stTextInput > div > div > input, .stTextArea > div > div > textarea {
-        border-width: 2px;
-    }
-    """ if high_contrast else ""
-
-    reduce_motion_styles = """
-    * {
-        transition-duration: 0.01ms !important;
-        animation-duration: 0.01ms !important;
-        scroll-behavior: auto !important;
-    }
-    """ if reduce_motion else ""
-
-    st.markdown(
-        f"""
-<style>
-    :root {{
-        --color-bg-primary: {theme["color_bg_primary"]};
-        --color-bg-card: {theme["color_bg_card"]};
-        --color-bg-elevated: {theme["color_bg_elevated"]};
-        --color-text-primary: {theme["color_text_primary"]};
-        --color-text-secondary: {theme["color_text_secondary"]};
-        --color-text-muted: {theme["color_text_muted"]};
-        --color-accent-gold: {theme["color_accent_gold"]};
-        --color-accent-gold-light: {theme["color_accent_gold_light"]};
-        --color-pain: {theme["color_pain"]};
-        --color-pain-light: {theme["color_pain_light"]};
-        --color-gain: {theme["color_gain"]};
-        --color-gain-light: {theme["color_gain_light"]};
-        --color-success: {theme["color_success"]};
-        --color-success-light: {theme["color_success_light"]};
-        --color-warning: {theme["color_warning"]};
-        --color-warning-light: {theme["color_warning_light"]};
-        --color-error: {theme["color_error"]};
-        --color-error-light: {theme["color_error_light"]};
-        --color-border: {theme["color_border"]};
-        --color-border-light: {theme["color_border_light"]};
-        --font-display: {theme["font_display"]};
-        --font-body: {theme["font_body"]};
-        --texture-tint: {theme["texture_tint"]};
-        --motif-color: {theme["motif_color"]};
-        --rail-gradient: {theme["rail_gradient"]};
-        --motion-distance: {theme["motion_distance"]};
-        --coaching-tip-tint: {theme["coaching_tip_tint"]};
-        --font-scale: {"1.08" if large_text else "1"};
-    }}
-
-    .stApp::before {{
-        opacity: {theme["noise_opacity"]};
-        background:
-            radial-gradient(circle at 10% 10%, var(--texture-tint) 0%, transparent 45%),
-            radial-gradient(circle at 90% 70%, var(--texture-tint) 0%, transparent 45%),
-            url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-    }}
-
-    .main-header {{
-        background: {theme["header_gradient"]};
-        color: {theme["header_text"]};
-    }}
-
-    .main-header::before {{
-        background:
-            radial-gradient(ellipse at 20% 30%, {theme["header_overlay_a"]} 0%, transparent 50%),
-            radial-gradient(ellipse at 80% 70%, {theme["header_overlay_b"]} 0%, transparent 50%);
-    }}
-
-    .summary-section,
-    .empty-state {{
-        background: linear-gradient(145deg, var(--color-bg-card) 0%, {theme["surface_tint"]} 100%);
-    }}
-
-    .success-banner {{
-        background: linear-gradient(145deg, var(--color-success-light) 0%, {theme["success_tint"]} 100%);
-    }}
-
-    .success-banner p {{
-        color: {theme["success_text"]};
-    }}
-
-    .restore-banner {{
-        background: linear-gradient(145deg, var(--color-warning-light) 0%, {theme["warning_tint"]} 100%);
-    }}
-
-    .restore-banner-title {{
-        color: {theme["restore_title"]};
-    }}
-
-    .restore-banner-description,
-    .restore-banner-hint {{
-        color: {theme["restore_description"]};
-    }}
-
-    .stButton > button[kind="primary"]:hover {{
-        background: {theme["primary_hover"]};
-        border-color: {theme["primary_hover"]};
-    }}
-
-    .stDownloadButton > button {{
-        background: linear-gradient(135deg, var(--color-text-primary) 0%, {theme["primary_hover"]} 100%);
-    }}
-
-    .stDownloadButton > button:hover {{
-        background: linear-gradient(135deg, {theme["primary_hover"]} 0%, var(--color-text-primary) 100%);
-    }}
-
-    {high_contrast_styles}
-    {reduce_motion_styles}
-</style>
-""",
-        unsafe_allow_html=True,
-    )
-
-
-# ============ API Configuration ============
+# ── Load external CSS ──
+_CSS_PATH = Path(__file__).parent / "assets" / "style.css"
+if _CSS_PATH.exists():
+    st.markdown(f"<style>{_CSS_PATH.read_text()}</style>", unsafe_allow_html=True)
+
+# ── API Configuration ──
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
-API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")  # Optional API key for authentication
+API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
+
+# ── Theme Configuration (Light + Dark only) ──
+DEFAULT_THEME = "Light"
+THEME_CONFIGS = {
+    "Light": {},  # Uses CSS :root defaults
+    "Dark": {"attr": "dark"},
+}
 
 
-# ============ Session Persistence Functions ============
-def save_session_to_file():
-    """Save current session state to a local file for persistence across refreshes."""
-    try:
-        session_data = {
-            "step": st.session_state.get("step", 0),
-            "job_description": st.session_state.get("job_description", ""),
-            "pain_points": st.session_state.get("pain_points", []),
-            "gain_points": st.session_state.get("gain_points", []),
-            "job_validated": st.session_state.get("job_validated", False),
-            "pains_validated": st.session_state.get("pains_validated", False),
-            "gains_validated": st.session_state.get("gains_validated", False),
-            "theme_mode": st.session_state.get("theme_mode", DEFAULT_THEME),
-            "pref_high_contrast": st.session_state.get("pref_high_contrast", False),
-            "pref_reduce_motion": st.session_state.get("pref_reduce_motion", False),
-            "pref_large_text": st.session_state.get("pref_large_text", False),
-            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")
-        }
-        with open(SESSION_FILE, "w") as f:
-            json.dump(session_data, f, indent=2)
-        return True
-    except Exception as e:
-        logger.error("Error saving session: %s", e)
-        return False
+# ═══════════════════════════════════════════════════════════════════════════
+# Session State
+# ═══════════════════════════════════════════════════════════════════════════
 
-
-def load_session_from_file() -> Optional[dict]:
-    """Load session state from file if it exists."""
-    try:
-        if SESSION_FILE.exists():
-            with open(SESSION_FILE, "r") as f:
-                return json.load(f)
-    except Exception as e:
-        logger.error("Error loading session: %s", e)
-    return None
-
-
-def clear_saved_session():
-    """Delete the saved session file."""
-    try:
-        if SESSION_FILE.exists():
-            SESSION_FILE.unlink()
-        return True
-    except Exception:
-        return False
-
-
-def has_saved_session() -> bool:
-    """Check if a saved session exists with meaningful data."""
-    session = load_session_from_file()
-    if session:
-        # Only consider it a real session if there's actual content
-        has_content = (
-            session.get("job_description", "").strip() or
-            len(session.get("pain_points", [])) > 0 or
-            len(session.get("gain_points", [])) > 0
-        )
-        return has_content
-    return False
-
-
-def restore_session(session_data: dict):
-    """Restore session state from saved data."""
-    reset_session_state(preserve_theme=False)
-
-    # Overlay canvas data
-    st.session_state.step = session_data.get("step", 0)
-    st.session_state.job_description = session_data.get("job_description", "")
-    st.session_state.pain_points = list(session_data.get("pain_points", []))
-    st.session_state.gain_points = list(session_data.get("gain_points", []))
-    st.session_state.job_validated = session_data.get("job_validated", False)
-    st.session_state.pains_validated = session_data.get("pains_validated", False)
-    st.session_state.gains_validated = session_data.get("gains_validated", False)
-
-    # Restore theme preferences
-    theme_mode = session_data.get("theme_mode", DEFAULT_THEME)
-    st.session_state.theme_mode = theme_mode if theme_mode in THEME_CONFIGS else DEFAULT_THEME
-    st.session_state.theme_picker = st.session_state.theme_mode
-    st.session_state.pref_high_contrast = bool(session_data.get("pref_high_contrast", False))
-    st.session_state.pref_reduce_motion = bool(session_data.get("pref_reduce_motion", False))
-    st.session_state.pref_large_text = bool(session_data.get("pref_large_text", False))
-    st.session_state.pref_high_contrast_checkbox = st.session_state.pref_high_contrast
-    st.session_state.pref_reduce_motion_checkbox = st.session_state.pref_reduce_motion
-    st.session_state.pref_large_text_checkbox = st.session_state.pref_large_text
-
-    st.session_state.session_loaded = True
-
-
-# ============ Session State Initialization ============
-
-# Canonical defaults for all mutable session state keys.
-# Used by init_session_state and reset_session_state to avoid scattered magic defaults.
-INITIAL_SESSION_STATE: dict = {
+INITIAL_STATE = {
     "step": 0,
     "job_description": "",
     "pain_points": [],
@@ -1946,80 +62,117 @@ INITIAL_SESSION_STATE: dict = {
     "gains_validated": False,
     "editing_pain_index": None,
     "editing_gain_index": None,
-    "new_pain_input": "",
-    "new_gain_input": "",
     "session_loaded": False,
+    "canvas_mode": "spatial",  # "spatial" or "guided"
 }
 
 
-def reset_session_state(preserve_theme: bool = False):
-    """Reset canvas data to defaults. Optionally preserves theme preferences."""
-    for key, default in INITIAL_SESSION_STATE.items():
-        # Lists must be fresh copies to avoid shared references
-        st.session_state[key] = list(default) if isinstance(default, list) else default
-    clear_inline_notice("pain")
-    clear_inline_notice("gain")
-    if not preserve_theme:
-        st.session_state.theme_mode = DEFAULT_THEME
-        st.session_state.theme_picker = DEFAULT_THEME
-        st.session_state.pref_high_contrast = False
-        st.session_state.pref_reduce_motion = False
-        st.session_state.pref_large_text = False
-        st.session_state.pref_high_contrast_checkbox = False
-        st.session_state.pref_reduce_motion_checkbox = False
-        st.session_state.pref_large_text_checkbox = False
-
-
 def init_session_state():
-    """Initialize session state variables."""
-    for key, default in INITIAL_SESSION_STATE.items():
+    for key, default in INITIAL_STATE.items():
         if key not in st.session_state:
             st.session_state[key] = list(default) if isinstance(default, list) else default
-
-    if 'theme_mode' not in st.session_state:
+    if "theme_mode" not in st.session_state:
         st.session_state.theme_mode = DEFAULT_THEME
-    elif st.session_state.theme_mode not in THEME_CONFIGS:
-        st.session_state.theme_mode = DEFAULT_THEME
-    if 'theme_picker' not in st.session_state:
-        st.session_state.theme_picker = st.session_state.theme_mode
-    if 'pref_high_contrast' not in st.session_state:
+    if "pref_high_contrast" not in st.session_state:
         st.session_state.pref_high_contrast = False
-    if 'pref_reduce_motion' not in st.session_state:
-        st.session_state.pref_reduce_motion = False
-    if 'pref_large_text' not in st.session_state:
+    if "pref_large_text" not in st.session_state:
         st.session_state.pref_large_text = False
-    if 'pref_high_contrast_checkbox' not in st.session_state:
-        st.session_state.pref_high_contrast_checkbox = st.session_state.pref_high_contrast
-    if 'pref_reduce_motion_checkbox' not in st.session_state:
-        st.session_state.pref_reduce_motion_checkbox = st.session_state.pref_reduce_motion
-    if 'pref_large_text_checkbox' not in st.session_state:
-        st.session_state.pref_large_text_checkbox = st.session_state.pref_large_text
-    if 'show_restore_prompt' not in st.session_state:
-        st.session_state.show_restore_prompt = has_saved_session()
 
 
-# ============ Performance: Cached HTTP Client ============
+def reset_session_state(preserve_theme: bool = False):
+    for key, default in INITIAL_STATE.items():
+        st.session_state[key] = list(default) if isinstance(default, list) else default
+    if not preserve_theme:
+        st.session_state.theme_mode = DEFAULT_THEME
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Theme
+# ═══════════════════════════════════════════════════════════════════════════
+
+def apply_theme():
+    """Apply dark theme and accessibility overrides via CSS injection.
+    Must be called early in the render cycle, before any content."""
+    parts = []
+
+    if st.session_state.get("theme_mode") == "Dark":
+        parts.append("""
+        :root {
+            --color-primary: #60a5fa !important;
+            --color-primary-hover: #93bbfd !important;
+            --color-primary-light: #1e3a5f !important;
+            --color-bg-page: #0f1117 !important;
+            --color-bg-card: #1a1d27 !important;
+            --color-text-primary: #f1f5f9 !important;
+            --color-text-secondary: #94a3b8 !important;
+            --color-text-muted: #64748b !important;
+            --color-border: #334155 !important;
+            --color-border-light: #1e293b !important;
+            --color-success: #34d399 !important;
+            --color-success-light: #132f21 !important;
+            --color-warning: #fbbf24 !important;
+            --color-warning-light: #3b2f10 !important;
+            --color-error: #f87171 !important;
+            --color-error-light: #3b1515 !important;
+            --color-pain: #fb7185 !important;
+            --color-pain-light: #3b1525 !important;
+            --color-gain: #2dd4bf !important;
+            --color-gain-light: #0f3b35 !important;
+        }
+        .stApp.stApp { background: #0f1117 !important; color: #f1f5f9 !important; color-scheme: dark !important; }
+        [data-testid="stAppViewContainer"],
+        .main, .main .block-container { background: #0f1117 !important; color: #f1f5f9 !important; }
+        section[data-testid="stSidebar"],
+        section[data-testid="stSidebar"] > div { background: #1a1d27 !important; border-right-color: #334155 !important; }
+        .stTextArea > div > div > textarea,
+        .stTextInput > div > div > input { background: #1a1d27 !important; color: #f1f5f9 !important; border-color: #334155 !important; }
+        .stSelectbox > div > div,
+        .stSelectbox [data-baseweb="select"],
+        [data-baseweb="popover"] > div { background: #1a1d27 !important; color: #f1f5f9 !important; }
+        h1, h2, h3, h4, p, span, label, .stMarkdown, .stCaption, a { color: #f1f5f9 !important; }
+        .stButton > button:not([kind="primary"]) { background: #1a1d27 !important; color: #f1f5f9 !important; border-color: #334155 !important; }
+        .stButton > button[kind="primary"] { background: #60a5fa !important; border-color: #60a5fa !important; }
+        hr { background: #334155 !important; }
+        .stTabs [data-baseweb="tab-list"] { border-bottom-color: #334155 !important; }
+        .stTabs [data-baseweb="tab"] { color: #94a3b8 !important; }
+        .stRadio label, .stCheckbox label { color: #f1f5f9 !important; }
+        [data-testid="stForm"] { border-color: #334155 !important; }
+        .stDownloadButton > button { background: #60a5fa !important; border-color: #60a5fa !important; }
+        """)
+
+    if st.session_state.get("pref_large_text"):
+        parts.append(":root { --font-scale: 1.1; }")
+
+    if st.session_state.get("pref_high_contrast"):
+        parts.append("""
+        :root { --color-border: #374151; --color-text-muted: #374151; }
+        .stButton > button, .stTextInput > div > div > input, .stTextArea > div > div > textarea { border-width: 2px; }
+        """)
+
+    if parts:
+        st.markdown(f"<style>{''.join(parts)}</style>", unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# API Helpers
+# ═══════════════════════════════════════════════════════════════════════════
+
 @st.cache_resource
 def get_http_client() -> httpx.Client:
-    """Get a cached HTTP client for connection pooling (reduces latency by 10-50ms per request)."""
     return httpx.Client(timeout=30.0)
 
 
-# ============ API Helpers ============
 def get_api_headers() -> dict:
-    """Get API headers including authentication."""
     headers = {"Content-Type": "application/json"}
-    # Prefer Bearer token (user auth) over API key
+    if API_SECRET_KEY:
+        headers["X-API-Key"] = API_SECRET_KEY
     auth_token = st.session_state.get("auth_token")
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
-    elif API_SECRET_KEY:
-        headers["X-API-Key"] = API_SECRET_KEY
     return headers
 
 
 def call_api(endpoint: str, method: str = "GET", data: dict = None) -> dict:
-    """Call the backend API with authentication using cached HTTP client."""
     try:
         headers = get_api_headers()
         client = get_http_client()
@@ -2027,11 +180,8 @@ def call_api(endpoint: str, method: str = "GET", data: dict = None) -> dict:
             response = client.get(f"{API_BASE_URL}{endpoint}", headers=headers)
         else:
             response = client.post(f"{API_BASE_URL}{endpoint}", json=data, headers=headers)
-
         if response.status_code == 200:
             return response.json()
-        elif response.status_code == 403:
-            return {"error": "Authentication failed. Check API_SECRET_KEY configuration."}
         elif response.status_code == 429:
             return {"error": "Rate limit exceeded. Please wait before trying again."}
         else:
@@ -2040,1006 +190,819 @@ def call_api(endpoint: str, method: str = "GET", data: dict = None) -> dict:
         return {"error": f"Connection error: {str(e)}"}
 
 
-# ============ Performance: Cached Coaching Tips ============
-@st.cache_data(ttl=3600)  # Cache for 1 hour - tips don't change frequently
-def get_coaching_tip_cached(step: str) -> str:
-    """Get coaching tip with caching to reduce API calls."""
+# ═══════════════════════════════════════════════════════════════════════════
+# Cached Validation / Coaching
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _content_hash(content: str) -> str:
+    return hashlib.sha256(content.encode()).hexdigest()
+
+
+@st.cache_data(ttl=3600)
+def _coaching_tip_cached(step: str) -> str:
     result = call_api(f"/api/coaching-tip/{step}")
     return result.get("tip", "")
 
 
-def get_coaching_tip(step: str) -> str:
-    """Get coaching tip for the current step (cached)."""
-    return get_coaching_tip_cached(step)
+@st.cache_data(ttl=300)
+def _validate_job_cached(h: str, desc: str) -> dict:
+    return call_api("/api/validate/job-description", "POST", {"description": desc})
 
 
-# ============ Performance: Cached Validation ============
-def get_content_hash(content: str) -> str:
-    """Generate a hash for content to enable caching."""
-    return hashlib.md5(content.encode()).hexdigest()
+@st.cache_data(ttl=300)
+def _validate_pains_cached(h: str, points: tuple) -> dict:
+    return call_api("/api/validate/pain-points", "POST", {"pain_points": list(points)})
 
 
-@st.cache_data(ttl=300)  # Cache validation results for 5 minutes
-def validate_job_description_cached(description_hash: str, description: str) -> dict:
-    """Cached job description validation."""
-    return call_api("/api/validate/job-description", "POST", {"description": description})
+@st.cache_data(ttl=300)
+def _validate_gains_cached(h: str, points: tuple) -> dict:
+    return call_api("/api/validate/gain-points", "POST", {"gain_points": list(points)})
 
 
-@st.cache_data(ttl=300)  # Cache validation results for 5 minutes
-def validate_pain_points_cached(points_hash: str, pain_points: tuple) -> dict:
-    """Cached pain points validation (uses tuple for hashability)."""
-    return call_api("/api/validate/pain-points", "POST", {"pain_points": list(pain_points)})
+# ═══════════════════════════════════════════════════════════════════════════
+# UI Helpers
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _normalize(text: str) -> str:
+    return " ".join(text.lower().split())
 
 
-@st.cache_data(ttl=300)  # Cache validation results for 5 minutes
-def validate_gain_points_cached(points_hash: str, gain_points: tuple) -> dict:
-    """Cached gain points validation (uses tuple for hashability)."""
-    return call_api("/api/validate/gain-points", "POST", {"gain_points": list(gain_points)})
-
-
-# ============ UI Interaction Helpers ============
-def normalize_item_text(value: str) -> str:
-    """Normalize item text for duplicate checks."""
-    return " ".join(value.lower().split())
-
-
-def has_duplicate_item(candidate: str, existing_items: list, exclude_index: Optional[int] = None) -> bool:
-    """Check duplicate items with normalization."""
-    normalized_candidate = normalize_item_text(candidate)
-    for i, item in enumerate(existing_items):
-        if exclude_index is not None and i == exclude_index:
+def _is_duplicate(candidate: str, items: list, exclude: Optional[int] = None) -> bool:
+    n = _normalize(candidate)
+    for i, item in enumerate(items):
+        if exclude is not None and i == exclude:
             continue
-        if normalize_item_text(item) == normalized_candidate:
+        if _normalize(item) == n:
             return True
     return False
 
 
-def set_inline_notice(scope: str, msg_type: str, message: str):
-    """Set an inline message to show near a section input area."""
-    st.session_state[f"{scope}_notice_type"] = msg_type
-    st.session_state[f"{scope}_notice_message"] = message
-
-
-def clear_inline_notice(scope: str):
-    """Clear inline message for a section."""
-    st.session_state.pop(f"{scope}_notice_type", None)
-    st.session_state.pop(f"{scope}_notice_message", None)
-
-
-def render_inline_notice(scope: str):
-    """Render inline message for a section."""
-    notice_type = st.session_state.get(f"{scope}_notice_type")
-    notice_message = st.session_state.get(f"{scope}_notice_message")
-    if notice_type and notice_message:
-        render_validation_message(notice_type, notice_message)
-
-
-def has_related_independence_issue(independence_issues: list, target_index: int) -> Optional[str]:
-    """Find independence issue related to the target index."""
-    for issue in independence_issues:
-        idx1 = issue.get("item1_index")
-        idx2 = issue.get("item2_index")
-        if target_index in (idx1, idx2):
-            return issue.get("message", "This item is too similar to another item. Please make it more distinct.")
-    return None
-
-
-def render_step_actions(
-    back_label: str,
-    back_key: str,
-    back_step: int,
-    next_label: str,
-    next_key: str,
-    next_step: int,
-    next_disabled: bool = False,
-    next_primary: bool = True,
-):
-    """Render a sticky action bar for step navigation."""
-    st.markdown('<div class="step-actions-bar section-reveal">', unsafe_allow_html=True)
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button(back_label, key=back_key, use_container_width=True):
-            st.session_state.step = back_step
-            st.rerun()
-    with col2:
-        button_type = "primary" if next_primary else "secondary"
-        if st.button(next_label, key=next_key, use_container_width=True, type=button_type, disabled=next_disabled):
-            st.session_state.step = next_step
-            st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-def try_add_collection_item(
-    collection_key: str,
-    endpoint: str,
-    payload_key: str,
-    item_label: str,
-    scope: str,
-    candidate: str,
-) -> bool:
-    """Try to add a new item with duplicate and independence checks."""
-    clean_candidate = candidate.strip()
-    if not clean_candidate:
-        set_inline_notice(scope, "warning", f"Please enter a {item_label} before adding.")
-        return False
-
-    existing_items = st.session_state.get(collection_key, [])
-    if has_duplicate_item(clean_candidate, existing_items):
-        set_inline_notice(scope, "error", f"This {item_label} is already listed. Add a distinct one.")
-        return False
-
-    updated_items = existing_items + [clean_candidate]
-    result = call_api(endpoint, "POST", {payload_key: updated_items})
-    if "error" in result:
-        set_inline_notice(scope, "warning", "Validation is temporarily unavailable. Please try again.")
-        return False
-
-    independence = result.get("independence_check", {})
-    if independence and not independence.get("independent", True):
-        issue_message = has_related_independence_issue(independence.get("issues", []), len(updated_items) - 1)
-        if issue_message:
-            set_inline_notice(scope, "error", issue_message)
-            return False
-
-    st.session_state[collection_key].append(clean_candidate)
-    set_inline_notice(scope, "success", f"{item_label.capitalize()} added.")
-    return True
-
-
-def try_update_collection_item(
-    collection_key: str,
-    endpoint: str,
-    payload_key: str,
-    item_label: str,
-    scope: str,
-    item_index: int,
-    candidate: str,
-) -> bool:
-    """Try to update an existing item with duplicate and independence checks."""
-    clean_candidate = candidate.strip()
-    if not clean_candidate:
-        set_inline_notice(scope, "warning", f"{item_label.capitalize()} cannot be empty.")
-        return False
-
-    existing_items = st.session_state.get(collection_key, [])
-    if item_index < 0 or item_index >= len(existing_items):
-        set_inline_notice(scope, "error", f"Unable to edit {item_label}; item no longer exists.")
-        return False
-
-    if has_duplicate_item(clean_candidate, existing_items, exclude_index=item_index):
-        set_inline_notice(scope, "error", f"This {item_label} duplicates another entry.")
-        return False
-
-    updated_items = existing_items.copy()
-    updated_items[item_index] = clean_candidate
-
-    result = call_api(endpoint, "POST", {payload_key: updated_items})
-    if "error" in result:
-        set_inline_notice(scope, "warning", "Validation is temporarily unavailable. Please try again.")
-        return False
-
-    independence = result.get("independence_check", {})
-    if independence and not independence.get("independent", True):
-        issue_message = has_related_independence_issue(independence.get("issues", []), item_index)
-        if issue_message:
-            set_inline_notice(scope, "error", issue_message)
-            return False
-
-    st.session_state[collection_key][item_index] = clean_candidate
-    set_inline_notice(scope, "success", f"{item_label.capitalize()} updated.")
-    return True
-
-
-def infer_item_metadata(text: str, item_type: str) -> dict:
-    """Infer lightweight metadata chips for list cards."""
-    lowered = text.lower()
-    words = max(1, len(text.split()))
-
-    if item_type == "pain":
-        if any(token in lowered for token in ["delay", "blocked", "risk", "urgent", "critical"]):
-            urgency = "high urgency"
-        elif any(token in lowered for token in ["slow", "manual", "rework", "waiting"]):
-            urgency = "medium urgency"
-        else:
-            urgency = "steady friction"
-    else:
-        if any(token in lowered for token in ["revenue", "growth", "customer", "value", "impact"]):
-            urgency = "high impact"
-        elif any(token in lowered for token in ["clear", "faster", "quality", "focus"]):
-            urgency = "medium impact"
-        else:
-            urgency = "future upside"
-
-    if any(token in lowered for token in ["team", "stakeholder", "customer", "leadership"]):
-        category = "collaboration"
-    elif any(token in lowered for token in ["report", "document", "analysis", "data", "metric"]):
-        category = "information flow"
-    elif any(token in lowered for token in ["tool", "system", "automation", "process"]):
-        category = "operations"
-    else:
-        category = "execution"
-
-    confidence = "high confidence" if words >= 10 else "draft confidence"
-    return {"category": category, "urgency": urgency, "confidence": confidence}
-
-
-def build_item_card_html(index: int, item_text: str, item_type: str) -> str:
-    """Build HTML for rich item card with metadata chips."""
-    safe_text = html.escape(item_text)
-    meta = infer_item_metadata(item_text, item_type)
-    prefix = "P" if item_type == "pain" else "G"
-    return f"""
-        <div class="item-card section-reveal">
-            <div class="item-number {item_type}">{prefix}{index + 1}</div>
-            <div class="item-text">
-                {safe_text}
-                <div class="item-metadata" aria-label="Item metadata">
-                    <span class="item-chip accent">{html.escape(meta["urgency"])}</span>
-                    <span class="item-chip">{html.escape(meta["category"])}</span>
-                    <span class="item-chip">{html.escape(meta["confidence"])}</span>
-                </div>
-            </div>
-        </div>
-    """
-
-
-def render_step_rail(step_title: str, focus_prompt: str, checks: list, tip: str = ""):
-    """Render right-side rail with guidance and shortcuts."""
-    safe_title = html.escape(step_title)
-    safe_focus = html.escape(focus_prompt)
-    checks_md = "\n".join([f"- {html.escape(item)}" for item in checks])
-    tip_md = ""
-    if tip:
-        tip_md = (
-            "\n**Coaching Signal**\n"
-            + html.escape(tip).replace(chr(10), "  \n")
-            + "\n"
-        )
-
-    rail_md = dedent(
-        f"""
-        <div class="design-rail section-reveal stagger-2" aria-label="Step guidance">
-        <div class="rail-title">{safe_title}</div>
-        <div class="rail-copy">{safe_focus}</div>
-        </div>
-        """
-    ).strip()
-    st.markdown(rail_md, unsafe_allow_html=True)
-    st.markdown("**Checklist**")
-    st.markdown(checks_md)
-    if tip_md:
-        st.markdown(tip_md)
-    st.markdown("**Keyboard**")
-    st.markdown("- **Enter**: Add in quick composer")
-    st.markdown("- **Cmd/Ctrl + Enter**: Validate now")
-    st.markdown("- **Esc**: Cancel current edit")
-
-
-def render_progress_narrative():
-    """Render narrative milestone summary under progress tracker."""
-    current = st.session_state.step
-    title, purpose = STEP_PURPOSES[current]
-    completed = current
-    total = len(STEP_PURPOSES) - 1
-    if current == 1:
-        quality = "validated" if st.session_state.job_validated else "draft"
-    elif current == 2:
-        quality = "validated" if st.session_state.pains_validated else "in progress"
-    elif current == 3:
-        quality = "validated" if st.session_state.gains_validated else "in progress"
-    elif current == 4:
-        quality = "publish-ready"
-    else:
-        quality = "getting started"
+def _render_validation_msg(msg_type: str, message: str):
+    icons = {"success": "✓", "warning": "!", "error": "✕"}
+    safe = html.escape(message)
+    role = "alert" if msg_type == "error" else "status"
     st.markdown(
-        f"""
-        <div class="milestone-card section-reveal stagger-2" role="status" aria-label="Current milestone">
-            <div class="milestone-head">
-                <span class="milestone-title">Current Milestone: {html.escape(title)}</span>
-                <span>{completed}/{total} complete · {html.escape(quality)}</span>
-            </div>
-            <div class="milestone-purpose">{html.escape(purpose)}</div>
-        </div>
-        """,
+        f'<div class="validation-msg {msg_type}" role="{role}">'
+        f'<span class="validation-icon">{icons.get(msg_type, "")}</span> {safe}</div>',
         unsafe_allow_html=True,
     )
 
 
-def inject_hotkeys_script():
-    """Inject lightweight client-side keyboard shortcuts."""
-    components.html(
-        """
-        <script>
-        (() => {
-          const root = window.parent && window.parent.document ? window.parent.document : document;
-          if (root.__vpcHotkeysInstalled) return;
-          root.__vpcHotkeysInstalled = true;
-          root.addEventListener("keydown", (event) => {
-            const key = event.key.toLowerCase();
-            if ((event.metaKey || event.ctrlKey) && key === "enter") {
-              const validateBtn = [...root.querySelectorAll("button")]
-                .find((btn) => btn.innerText && btn.innerText.includes("Validate Now"));
-              if (validateBtn) {
-                event.preventDefault();
-                validateBtn.click();
-              }
-            }
-            if (key === "escape") {
-              const cancelBtn = [...root.querySelectorAll("button")]
-                .find((btn) => btn.innerText && btn.innerText.trim() === "Cancel");
-              if (cancelBtn) {
-                event.preventDefault();
-                cancelBtn.click();
-              }
-            }
-          });
-        })();
-        </script>
-        """,
-        height=0,
+def _render_quality_badge(score: int):
+    if score >= 75:
+        level = "high"
+    elif score >= 50:
+        level = "medium"
+    else:
+        level = "low"
+    st.markdown(
+        f'<div class="quality-badge {level}" role="status">'
+        f'Quality: {score}%</div>',
+        unsafe_allow_html=True,
     )
 
 
-# ============ UI Components ============
-def render_header():
-    """Render the main header."""
-    st.markdown("""
-        <div class="main-header section-reveal">
-            <div class="hero-kicker">Value Proposition Canvas</div>
-            <h1>Work Process Reflection Studio</h1>
-            <p>Turn operational friction into a clear, shareable strategy narrative.</p>
-            <div class="hero-signature">
-                <div class="hero-signature-line"></div>
-                <div class="hero-signature-copy">Structured insight, production-ready output</div>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
-
-def render_progress():
-    """Render the progress indicator with connector lines."""
-    steps = ["Welcome", "Job Description", "Pain Points", "Gain Points", "Review"]
-    current = st.session_state.step
-    theme = get_active_theme()
-
-    # Build HTML for progress steps with connectors (single-line to avoid rendering issues)
-    steps_html = []
-    for i, step_name in enumerate(steps):
-        if i < current:
-            indicator = "✓"
-            indicator_style = (
-                f"background: {theme['progress_complete']}; color: {theme['progress_complete_text']}; "
-                f"border-color: {theme['progress_complete']};"
-            )
-            label_style = f"color: {theme['progress_complete']}; font-weight: 500;"
-            status = "completed"
-        elif i == current:
-            indicator = str(i + 1)
-            indicator_style = (
-                f"background: {theme['progress_active']}; color: {theme['progress_active_text']}; "
-                f"box-shadow: 0 0 0 4px {theme['progress_active_glow']}; border-color: {theme['color_accent_gold']};"
-            )
-            label_style = f"color: {theme['progress_active']}; font-weight: 600;"
-            status = "current"
-        else:
-            indicator = str(i + 1)
-            indicator_style = (
-                f"background: {theme['progress_upcoming_bg']}; color: {theme['progress_upcoming_text']}; "
-                f"border: 2px solid {theme['progress_upcoming_border']};"
-            )
-            label_style = f"color: {theme['progress_upcoming_text']}; font-weight: 500;"
-            status = "upcoming"
-
-        connector_html = ""
-        if i < len(steps) - 1:
-            connector_color = theme["progress_complete"] if i < current else theme["progress_upcoming_border"]
-            connector_html = f'<div class="progress-line" style="background: {connector_color};"></div>'
-
-        # Build as single-line HTML to avoid Streamlit rendering issues with multiline f-strings
-        item_html = f'<div class="progress-step-wrapper"><div class="progress-step-content"><div class="progress-indicator" style="{indicator_style}" role="listitem" aria-label="Step {i+1}: {step_name}, {status}">{indicator}</div><div class="progress-label" style="{label_style}">{step_name}</div></div>{connector_html}</div>'
-        steps_html.append(item_html)
-
-    # Join steps outside the f-string
-    joined_steps = ''.join(steps_html)
-
-    container_html = f'<div class="progress-bar-container section-reveal stagger-1" role="list" aria-label="Progress steps">{joined_steps}</div>'
-    st.markdown(container_html, unsafe_allow_html=True)
-
-
-def render_coaching_tip(tip: str):
-    """Render a coaching tip box with XSS protection."""
-    # Escape HTML to prevent XSS, then convert newlines to <br>
-    safe_tip = html.escape(tip).replace(chr(10), '<br>')
-    st.markdown(f"""
-        <div class="coaching-tip section-reveal stagger-2">
-            <h4>Coaching guidance</h4>
-            <p>{safe_tip}</p>
-        </div>
-    """, unsafe_allow_html=True)
-
-
-def render_quality_score(score: int):
-    """Render a quality score badge with accessibility support."""
-    if score >= 75:
-        level = "high"
-        level_text = "high quality"
-    elif score >= 50:
-        level = "medium"
-        level_text = "medium quality, needs improvement"
-    else:
-        level = "low"
-        level_text = "low quality, significant improvements needed"
-
-    st.markdown(f"""
-        <div class="quality-score {level}" role="status" aria-label="Quality score: {score}%, {level_text}">
-            Quality score: {score}%
-        </div>
-    """, unsafe_allow_html=True)
-
-
-def render_validation_message(msg_type: str, message: str):
-    """Render a validation message with XSS protection and accessibility support."""
-    safe_message = html.escape(message)
-    role = "alert" if msg_type == "error" else "status"
-    aria_live = "assertive" if msg_type == "error" else "polite"
-    st.markdown(f"""
-        <div class="validation-{msg_type}" role="{role}" aria-live="{aria_live}">
-            {safe_message}
-        </div>
-    """, unsafe_allow_html=True)
-
-
-def render_empty_state(icon: str, title: str, description: str, hint: str = ""):
-    """Render an empty state placeholder."""
-    safe_icon = html.escape(icon)
-    safe_title = html.escape(title)
-    safe_description = html.escape(description)
-    hint_html = f'<div class="empty-state-hint">{html.escape(hint)}</div>' if hint else ""
-    st.markdown(f"""
-        <div class="empty-state section-reveal" role="status" aria-label="{safe_title}">
-            <div class="empty-state-icon">{safe_icon}</div>
-            <div class="empty-state-title">{safe_title}</div>
-            <div class="empty-state-description">{safe_description}</div>
-            {hint_html}
-        </div>
-    """, unsafe_allow_html=True)
-
-
-def render_session_restore_prompt():
-    """Render a prompt to restore a previous session."""
-    session_data = load_session_from_file()
-    if not session_data:
+def _render_coaching_tip(tip: str):
+    if not tip:
         return
+    safe = html.escape(tip).replace(chr(10), "<br>")
+    st.markdown(
+        f'<div class="coaching-tip">'
+        f'<div class="coaching-tip-title">Coaching</div>'
+        f'<p class="coaching-tip-text">{safe}</p></div>',
+        unsafe_allow_html=True,
+    )
 
-    saved_at = session_data.get("saved_at", "Unknown")
-    pain_count = len(session_data.get("pain_points", []))
-    gain_count = len(session_data.get("gain_points", []))
-    has_job = bool(session_data.get("job_description", "").strip())
 
-    # Build summary
-    items = []
-    if has_job:
-        items.append("job description")
-    if pain_count > 0:
-        items.append(f"{pain_count} pain point{'s' if pain_count != 1 else ''}")
-    if gain_count > 0:
-        items.append(f"{gain_count} gain point{'s' if gain_count != 1 else ''}")
+def _render_empty_state(title: str, description: str):
+    st.markdown(
+        f'<div class="empty-state">'
+        f'<div class="empty-state-title">{html.escape(title)}</div>'
+        f'<div class="empty-state-desc">{html.escape(description)}</div></div>',
+        unsafe_allow_html=True,
+    )
 
-    summary = ", ".join(items) if items else "some progress"
+
+def _build_item_html(index: int, text: str, item_type: str) -> str:
+    safe = html.escape(text)
+    prefix = "!" if item_type == "pain" else "+"
+    return (
+        f'<div class="item-card">'
+        f'<div class="item-badge {item_type}">{prefix}{index + 1}</div>'
+        f'<div class="item-text">{safe}</div></div>'
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Quality Thermometer (sidebar)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _quality_level_label(pain_count: int, gain_count: int, job_desc: str) -> tuple:
+    """Returns (label, css_class) for the overall quality."""
+    total = pain_count + gain_count
+    has_job = bool(job_desc.strip())
+    if total >= 15 and has_job:
+        return ("Strong", "strong")
+    elif total >= 6 and has_job:
+        return ("Working", "working")
+    else:
+        return ("Draft", "draft")
+
+
+def render_quality_thermometer():
+    """Render the multi-dimensional quality indicator in the sidebar."""
+    pains = st.session_state.get("pain_points", [])
+    gains = st.session_state.get("gain_points", [])
+    # Read from widget key (current value) or session state (saved value)
+    job = (st.session_state.get("spatial_job_input")
+           or st.session_state.get("guided_job_input")
+           or st.session_state.get("job_description", ""))
+
+    pain_count = len(pains)
+    gain_count = len(gains)
+
+    # Completeness: items vs ideal (7 pains + 8 gains = 15)
+    completeness = min(100, int((pain_count + gain_count) / 15 * 100))
+    # Balance: how close is the ratio to ideal 7:8
+    if pain_count + gain_count > 0:
+        ratio = min(pain_count, gain_count) / max(pain_count, gain_count, 1)
+        balance = int(ratio * 100)
+    else:
+        balance = 0
+    # Job presence
+    job_score = 100 if job.strip() else 0
+
+    label, label_class = _quality_level_label(pain_count, gain_count, job)
+
+    def bar_class(v):
+        if v >= 70:
+            return "high"
+        elif v >= 40:
+            return "medium"
+        return "low"
 
     st.markdown(f"""
-        <div class="restore-banner section-reveal" role="alert">
-            <div class="restore-banner-title">Previous Session Found</div>
-            <div class="restore-banner-description">
-                You have unsaved work from {saved_at} ({summary}).
-            </div>
-            <div class="restore-banner-hint">
-                Continue from where you left off, or start fresh with a new canvas.
-            </div>
+    <div class="quality-thermo">
+        <div class="quality-thermo-title">Canvas Quality</div>
+        <div class="quality-dimension">
+            <div class="quality-dimension-label"><span>Completeness</span><span>{completeness}%</span></div>
+            <div class="quality-bar"><div class="quality-bar-fill {bar_class(completeness)}" style="width:{completeness}%"></div></div>
         </div>
+        <div class="quality-dimension">
+            <div class="quality-dimension-label"><span>Balance</span><span>{balance}%</span></div>
+            <div class="quality-bar"><div class="quality-bar-fill {bar_class(balance)}" style="width:{balance}%"></div></div>
+        </div>
+        <div class="quality-dimension">
+            <div class="quality-dimension-label"><span>Job Defined</span><span>{"Yes" if job_score else "No"}</span></div>
+            <div class="quality-bar"><div class="quality-bar-fill {bar_class(job_score)}" style="width:{job_score}%"></div></div>
+        </div>
+        <div class="quality-label {label_class}">{label}</div>
+    </div>
     """, unsafe_allow_html=True)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Continue where I left off", use_container_width=True, type="primary"):
-            restore_session(session_data)
-            st.session_state.show_restore_prompt = False
-            st.rerun()
-    with col2:
-        if st.button("Start fresh", use_container_width=True):
-            clear_saved_session()
-            st.session_state.show_restore_prompt = False
-            st.rerun()
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Header
+# ═══════════════════════════════════════════════════════════════════════════
+
+def render_header():
+    st.markdown("""
+    <div class="app-header">
+        <h1>Value Proposition Canvas</h1>
+        <p>Map your job, pains, and gains into a clear strategy narrative.</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 
-# ============ Step Pages ============
-def render_welcome():
-    """Render the welcome page."""
-    # Show session restore prompt if there's a previous session
-    if st.session_state.show_restore_prompt:
-        render_session_restore_prompt()
-        return  # Don't show the rest until user decides
+# ═══════════════════════════════════════════════════════════════════════════
+# Spatial Canvas Mode (default)
+# ═══════════════════════════════════════════════════════════════════════════
 
-    st.markdown("## Welcome")
-    tip = get_coaching_tip("welcome")
+def _add_item_from_brainstorm(collection_key: str, endpoint: str, payload_key: str,
+                               item_label: str, raw_text: str) -> int:
+    """Parse brainstorm text (newline-separated), deduplicate, validate batch.
+    Returns count of items added."""
+    lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
+    if not lines:
+        return 0
 
-    main_col, rail_col = st.columns([2.05, 1], gap="large")
-    with rail_col:
-        render_step_rail(
-            step_title="Session Setup",
-            focus_prompt="You will move from one job statement to pains, gains, and final export.",
-            checks=[
-                "5-step guided flow",
-                "Auto validation each step",
-                "Export to Word at completion",
-            ],
-            tip=tip,
-        )
+    existing = st.session_state.get(collection_key, [])
+    added = 0
+    for line in lines:
+        if not _is_duplicate(line, existing):
+            existing.append(line)
+            added += 1
 
-    with main_col:
-        st.markdown('<div class="design-main section-reveal">', unsafe_allow_html=True)
-        st.markdown("""
-            <div class="summary-section section-reveal">
-                <h3>What You Will Build</h3>
-                <p>A publish-ready reflection canvas that maps one concrete work objective, its critical pain signals, and the gains that define success.</p>
-            </div>
-        """, unsafe_allow_html=True)
-        st.markdown("---")
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            if st.button("Start building your canvas", use_container_width=True, type="primary"):
-                st.session_state.step = 1
-                st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+    if added > 0:
+        st.session_state[collection_key] = existing
+    return added
 
 
-def render_job_description():
-    """Render the job description step."""
-    st.markdown("## Step 1: Define the Core Job")
-    tip = get_coaching_tip("job")
+def _job_section():
+    """Editable job statement section."""
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown("### Job Statement")
 
-    main_col, rail_col = st.columns([2.05, 1], gap="large")
-    with rail_col:
-        render_step_rail(
-            step_title="Step 1 Focus",
-            focus_prompt="Write one crisp objective with a visible outcome and audience.",
-            checks=[
-                "One objective, not a list",
-                "Include why it matters",
-                "Make success measurable",
-            ],
-            tip=tip,
-        )
+    job = st.text_area(
+        "What is the main task or goal you're trying to accomplish?",
+        value=st.session_state.job_description,
+        height=120,
+        placeholder="Example: I need to track my team's monthly expenses and generate financial reports efficiently, so I can make informed budget decisions...",
+        key="spatial_job_input",
+        label_visibility="collapsed",
+    )
+    st.session_state.job_description = job
 
-    with main_col:
-        st.markdown('<div class="design-main section-reveal">', unsafe_allow_html=True)
-        st.markdown("### What is the main task or goal you're trying to accomplish?")
-
-        job_desc = st.text_area(
-            "Describe the task, goal, or objective you're working on:",
-            value=st.session_state.job_description,
-            height=170,
-            placeholder="Example: I need to track my team's monthly expenses and generate financial reports efficiently, so I can make informed budget decisions and present clear summaries to leadership...",
-            key="job_input",
-        )
-        st.session_state.job_description = job_desc
-
-        result = None
-        if job_desc:
-            result = validate_job_description_cached(get_content_hash(job_desc), job_desc)
-
-        if st.button("Validate now (Cmd/Ctrl+Enter)", key="job_validate_now"):
-            if not job_desc.strip():
-                render_validation_message("warning", "Add a job description before validating.")
-            else:
-                render_validation_message("success", "Validation refreshed.")
-
+    if job.strip():
+        result = _validate_job_cached(_content_hash(job), job)
         if result and "error" not in result:
-            render_quality_score(result.get("score", 0))
-            if result.get("feedback"):
-                for feedback in result["feedback"]:
-                    render_validation_message("warning", feedback)
-            if result.get("suggestions"):
-                with st.expander("Suggestions for improvement"):
-                    for suggestion in result["suggestions"]:
-                        st.markdown(f"• {suggestion}")
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                _render_quality_badge(result.get("score", 0))
+            with col2:
+                if result.get("feedback"):
+                    for fb in result["feedback"]:
+                        _render_validation_msg("warning", fb)
             st.session_state.job_validated = result.get("valid", False)
 
-        if st.button("Get suggestions", key="job_suggestions"):
-            with st.spinner("Getting suggestions..."):
-                suggestions = call_api("/api/suggestions", "POST", {
-                    "step": "job",
-                    "job_description": job_desc
-                })
-                if "error" not in suggestions:
-                    st.info(suggestions.get("suggestions", "No suggestions available."))
+            if result.get("suggestions"):
+                with st.expander("Suggestions"):
+                    for s in result["suggestions"]:
+                        st.markdown(f"- {s}")
+        elif result and "error" in result:
+            st.caption("Validation service unavailable — your work is saved.")
+            st.session_state.job_validated = True
 
-        st.markdown("---")
-        render_step_actions(
-            back_label="Back",
-            back_key="job_back",
-            back_step=0,
-            next_label="Continue to Pain Points",
-            next_key="job_next",
-            next_step=2,
-            next_disabled=not st.session_state.job_validated,
+    # AI suggestions
+    if st.button("Get AI suggestions", key="spatial_job_suggest", type="secondary"):
+        with st.spinner("Thinking..."):
+            suggestions = call_api("/api/suggestions", "POST", {
+                "step": "job",
+                "job_description": job,
+            })
+            if "error" not in suggestions:
+                st.info(suggestions.get("suggestions", "No suggestions available."))
+            else:
+                st.warning(suggestions["error"])
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _items_column(collection_key: str, item_type: str, item_label: str,
+                  validate_endpoint: str, payload_key: str, validate_fn,
+                  validated_key: str, editing_key: str, ideal_min: int):
+    """Render a pain/gain column with brainstorm input and item list."""
+    items = st.session_state.get(collection_key, [])
+    icon = "!" if item_type == "pain" else "+"
+
+    # Column header
+    st.markdown(
+        f'<div class="col-header {item_type}">'
+        f'<div class="col-header-icon {item_type}">{icon}</div>'
+        f'<span class="col-header-title">{item_label.title()}s</span>'
+        f'<span class="col-header-count">{len(items)}</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    # Item list
+    if items:
+        for i, text in enumerate(items):
+            if st.session_state.get(editing_key) == i:
+                # Inline edit mode
+                with st.form(f"edit_{item_type}_{i}", clear_on_submit=False):
+                    edited = st.text_input(
+                        f"Edit {item_label}",
+                        value=text,
+                        key=f"edit_{item_type}_text_{i}",
+                        label_visibility="collapsed",
+                    )
+                    c1, c2 = st.columns(2)
+                    save = c1.form_submit_button("Save", use_container_width=True)
+                    cancel = c2.form_submit_button("Cancel", use_container_width=True)
+
+                if save:
+                    clean = edited.strip()
+                    if clean and not _is_duplicate(clean, items, exclude=i):
+                        st.session_state[collection_key][i] = clean
+                        st.session_state[editing_key] = None
+                        st.toast(f"{item_label.title()} updated")
+                        st.rerun()
+                    elif not clean:
+                        st.warning("Cannot be empty.")
+                    else:
+                        st.warning("Duplicate entry.")
+                if cancel:
+                    st.session_state[editing_key] = None
+                    st.rerun()
+            else:
+                st.markdown(_build_item_html(i, text, item_type), unsafe_allow_html=True)
+                c1, c2 = st.columns([1, 1])
+                with c1:
+                    if st.button("Edit", key=f"edit_{item_type}_btn_{i}", use_container_width=True):
+                        st.session_state[editing_key] = i
+                        st.rerun()
+                with c2:
+                    if st.button("Delete", key=f"del_{item_type}_btn_{i}", use_container_width=True):
+                        st.session_state[collection_key].pop(i)
+                        if st.session_state.get(editing_key) == i:
+                            st.session_state[editing_key] = None
+                        st.toast(f"{item_label.title()} removed")
+                        st.rerun()
+    else:
+        _render_empty_state(
+            f"No {item_label}s yet",
+            f"Add {item_label}s below — one per line for batch, or one at a time.",
         )
 
-        if not st.session_state.job_validated and job_desc:
-            st.caption("Please address the feedback above before continuing.")
-        st.markdown("</div>", unsafe_allow_html=True)
+    # Brainstorm input — clear if flagged from previous add
+    clear_key = f"_clear_brainstorm_{item_type}"
+    if st.session_state.get(clear_key):
+        st.session_state[f"brainstorm_{item_type}"] = ""
+        st.session_state[clear_key] = False
 
+    st.markdown("---")
+    brainstorm = st.text_area(
+        f"Add {item_label}s (one per line for batch)",
+        placeholder=f"Type a {item_label}, or paste multiple separated by newlines...",
+        key=f"brainstorm_{item_type}",
+        height=80,
+        label_visibility="collapsed",
+    )
 
-@dataclass
-class _ItemStepConfig:
-    """Configuration for a generic item-collection wizard step (pain or gain points)."""
-    collection_key: str
-    item_label: str
-    item_type: str
-    validate_endpoint: str
-    validate_cached_fn: object  # callable: (hash, tuple) -> dict
-    editing_index_key: str
-    new_input_key: str
-    validated_key: str
-    min_required: int
-    step_heading: str
-    step_title: str
-    focus_prompt: str
-    checklist_tail: List[str]   # items after the count line
-    main_question: str
-    add_label: str
-    add_placeholder: str
-    empty_icon: str
-    empty_title: str
-    empty_description: str
-    tip_step_name: str
-    suggestions_step_name: str
-    back_label: str
-    back_key: str
-    back_step: int
-    next_label: str
-    next_key: str
-    next_step: int
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button(f"Add {item_label}(s)", key=f"add_{item_type}_btn", type="primary",
+                      use_container_width=True):
+            if brainstorm.strip():
+                added = _add_item_from_brainstorm(
+                    collection_key, validate_endpoint, payload_key,
+                    item_label, brainstorm,
+                )
+                if added > 0:
+                    st.session_state[clear_key] = True
+                    st.toast(f"Added {added} {item_label}{'s' if added > 1 else ''}")
+                    st.rerun()
+                else:
+                    st.warning("All entries are duplicates.")
+            else:
+                st.warning(f"Enter a {item_label} first.")
 
-
-def _render_item_collection_step(cfg: _ItemStepConfig):
-    """Generic wizard step for collecting pain or gain points."""
-    st.markdown(cfg.step_heading)
-    tip = get_coaching_tip(cfg.tip_step_name)
-    items: list = st.session_state.get(cfg.collection_key, [])
-    remaining = max(0, cfg.min_required - len(items))
-
-    main_col, rail_col = st.columns([2.05, 1], gap="large")
-    with rail_col:
-        render_step_rail(
-            step_title=cfg.step_title,
-            focus_prompt=cfg.focus_prompt,
-            checks=[
-                f"{len(items)}/{cfg.min_required} captured",
-                *cfg.checklist_tail,
-            ],
-            tip=tip,
-        )
-
-    with main_col:
-        st.markdown('<div class="design-main section-reveal">', unsafe_allow_html=True)
-        st.markdown(f"### {cfg.main_question}")
-        st.markdown(
-            f"You need at least **{cfg.min_required} independent** {cfg.item_label}s. "
-            f"Currently: **{len(items)}**/{cfg.min_required}"
-        )
-
-        st.markdown(f"#### Your {cfg.item_label.capitalize()}s:")
-        if items:
-            for i, item_text in enumerate(items):
-                col1, col2, col3 = st.columns([9, 1, 1])
-                with col1:
-                    st.markdown(build_item_card_html(i, item_text, cfg.item_type), unsafe_allow_html=True)
-                with col2:
-                    st.markdown('<div class="item-action-group">', unsafe_allow_html=True)
-                    if st.button("Edit", key=f"edit_{cfg.item_type}_{i}", help=f"Edit this {cfg.item_label}"):
-                        st.session_state[cfg.editing_index_key] = i
-                        clear_inline_notice(cfg.item_type)
-                        st.rerun()
-                    st.markdown('</div>', unsafe_allow_html=True)
-                with col3:
-                    st.markdown('<div class="item-action-group">', unsafe_allow_html=True)
-                    if st.button("Delete", key=f"delete_{cfg.item_type}_{i}", help=f"Delete this {cfg.item_label}"):
-                        st.session_state[cfg.collection_key].pop(i)
-                        if st.session_state.get(cfg.editing_index_key) == i:
-                            st.session_state[cfg.editing_index_key] = None
-                        set_inline_notice(cfg.item_type, "success", f"{cfg.item_label.capitalize()} removed.")
-                        st.rerun()
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-                if st.session_state.get(cfg.editing_index_key) == i:
-                    with st.form(f"edit_{cfg.item_type}_form_{i}", clear_on_submit=False):
-                        edited_text = st.text_input(
-                            f"Edit this {cfg.item_label}",
-                            value=item_text,
-                            key=f"edit_{cfg.item_type}_text_{i}",
-                        )
-                        edit_col1, edit_col2 = st.columns(2)
-                        save_edit = edit_col1.form_submit_button("Save changes", use_container_width=True)
-                        cancel_edit = edit_col2.form_submit_button("Cancel", use_container_width=True)
-
-                    if save_edit:
-                        if try_update_collection_item(
-                            collection_key=cfg.collection_key,
-                            endpoint=cfg.validate_endpoint,
-                            payload_key=cfg.collection_key,
-                            item_label=cfg.item_label,
-                            scope=cfg.item_type,
-                            item_index=i,
-                            candidate=edited_text,
-                        ):
-                            st.session_state[cfg.editing_index_key] = None
-                            st.rerun()
-                    if cancel_edit:
-                        st.session_state[cfg.editing_index_key] = None
-                        clear_inline_notice(cfg.item_type)
-                        st.rerun()
-        else:
-            render_empty_state(
-                cfg.empty_icon,
-                cfg.empty_title,
-                cfg.empty_description,
-                "Press Enter to add quickly."
-            )
-
-        st.markdown(f"#### {cfg.add_label}:")
-        st.markdown('<div class="composer-hint">Power composer: Enter adds. Cmd/Ctrl+Enter validates. Esc cancels edit.</div>', unsafe_allow_html=True)
-        with st.form(f"add_{cfg.item_type}_form", clear_on_submit=False):
-            new_text = st.text_input(
-                f"Describe a specific {cfg.item_label}:",
-                placeholder=cfg.add_placeholder,
-                key=cfg.new_input_key,
-                help=f"Press Enter to add this {cfg.item_label} quickly.",
-            )
-            add_submitted = st.form_submit_button(f"Add {cfg.item_label.capitalize()}")
-
-        if add_submitted:
-            if try_add_collection_item(
-                collection_key=cfg.collection_key,
-                endpoint=cfg.validate_endpoint,
-                payload_key=cfg.collection_key,
-                item_label=cfg.item_label,
-                scope=cfg.item_type,
-                candidate=new_text,
-            ):
-                st.session_state[cfg.editing_index_key] = None
-                st.session_state[cfg.new_input_key] = ""
-                st.rerun()
-
-        render_inline_notice(cfg.item_type)
-
-        # Validate collection (cached to avoid redundant API calls on every render)
-        validation_result = None
-        if len(items) >= 2:
-            points_tuple = tuple(items)
-            validation_result = cfg.validate_cached_fn(get_content_hash(str(points_tuple)), points_tuple)
-
-        if st.button("Validate now (Cmd/Ctrl+Enter)", key=f"{cfg.item_type}_validate_now"):
-            if len(items) < 2:
-                render_validation_message("warning", f"Add at least 2 {cfg.item_label}s to run validation.")
-
-        if validation_result and "error" not in validation_result:
-            st.session_state[cfg.validated_key] = validation_result.get("valid", False)
-            for feedback in validation_result.get("overall_feedback", []):
-                render_validation_message("warning", feedback)
-            independence = validation_result.get("independence_check", {})
-            if independence and not independence.get("independent", True):
-                for issue in independence.get("issues", []):
-                    render_validation_message("error", issue.get("message", ""))
-        elif len(items) < 2:
-            st.session_state[cfg.validated_key] = False
-
-        remaining = max(0, cfg.min_required - len(items))
+    with c2:
+        remaining = max(0, ideal_min - len(items))
         if remaining > 0:
-            if st.button(f"Get suggestions for {remaining} more {cfg.item_label}s", key=f"{cfg.item_type}_suggestions"):
+            if st.button(f"Suggest {remaining} more", key=f"suggest_{item_type}_btn",
+                          use_container_width=True):
                 with st.spinner("Getting suggestions..."):
                     suggestions = call_api("/api/suggestions", "POST", {
-                        "step": cfg.suggestions_step_name,
+                        "step": "pains" if item_type == "pain" else "gains",
                         "job_description": st.session_state.job_description,
                         "existing_items": items,
-                        "count_needed": remaining
+                        "count_needed": remaining,
                     })
                     if "error" not in suggestions:
-                        st.info(suggestions.get("suggestions", "No suggestions available."))
+                        st.info(suggestions.get("suggestions", "No suggestions."))
+                    else:
+                        st.warning(suggestions["error"])
 
-        st.markdown("---")
-        can_proceed = len(items) >= cfg.min_required and st.session_state.get(cfg.validated_key, False)
-        render_step_actions(
-            back_label=cfg.back_label,
-            back_key=cfg.back_key,
-            back_step=cfg.back_step,
-            next_label=cfg.next_label,
-            next_key=cfg.next_key,
-            next_step=cfg.next_step,
-            next_disabled=not can_proceed,
+    # Validation (when 2+ items)
+    if len(items) >= 2:
+        points_tuple = tuple(items)
+        result = validate_fn(_content_hash(str(points_tuple)), points_tuple)
+        if result and "error" not in result:
+            st.session_state[validated_key] = result.get("valid", False)
+            for fb in result.get("overall_feedback", []):
+                _render_validation_msg("warning", fb)
+            independence = result.get("independence_check", {})
+            if independence and not independence.get("independent", True):
+                for issue in independence.get("issues", []):
+                    _render_validation_msg("error", issue.get("message", ""))
+        elif result and "error" in result:
+            # Validation service unavailable — don't block the user
+            st.session_state[validated_key] = True
+    else:
+        st.session_state[validated_key] = False
+
+    # Coaching nudge
+    nudge_thresholds = {3: "Strong canvases typically have 6-8 items.", 0: ""}
+    for threshold, msg in sorted(nudge_thresholds.items(), reverse=True):
+        if len(items) == threshold and msg:
+            _render_coaching_tip(f"{msg} You have {len(items)} — keep going?")
+            break
+
+
+def render_spatial_canvas():
+    """Render the single-page spatial canvas layout."""
+    # Job statement at top
+    _job_section()
+
+    # Pains (left) and Gains (right)
+    pain_col, gain_col = st.columns(2, gap="large")
+
+    with pain_col:
+        _items_column(
+            collection_key="pain_points",
+            item_type="pain",
+            item_label="pain point",
+            validate_endpoint="/api/validate/pain-points",
+            payload_key="pain_points",
+            validate_fn=_validate_pains_cached,
+            validated_key="pains_validated",
+            editing_key="editing_pain_index",
+            ideal_min=7,
         )
 
-        if not can_proceed:
-            st.caption(f"Add {max(0, cfg.min_required - len(items))} more unique {cfg.item_label}s to continue.")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-
-_PAIN_STEP_CONFIG = _ItemStepConfig(
-    collection_key="pain_points",
-    item_label="pain point",
-    item_type="pain",
-    validate_endpoint="/api/validate/pain-points",
-    validate_cached_fn=lambda h, t: validate_pain_points_cached(h, t),
-    editing_index_key="editing_pain_index",
-    new_input_key="new_pain_input",
-    validated_key="pains_validated",
-    min_required=7,
-    step_heading="## Step 2: Identify Pain Points",
-    step_title="Step 2 Focus",
-    focus_prompt="Capture distinct, root-cause pains rather than vague complaints.",
-    checklist_tail=["Keep each pain independent", "Describe observable impact"],
-    main_question="What obstacles and frustrations do you face in this work?",
-    add_label="Add a new pain point",
-    add_placeholder="Example: Spending hours manually consolidating data from multiple spreadsheets instead of focusing on analysis...",
-    empty_icon="P",
-    empty_title="No pain points added",
-    empty_description="Add your first pain point below to get started. Think about frustrations, obstacles, or risks in your work.",
-    tip_step_name="pains",
-    suggestions_step_name="pains",
-    back_label="Back to Job Description",
-    back_key="pain_back",
-    back_step=1,
-    next_label="Continue to Gain Points",
-    next_key="pain_next",
-    next_step=3,
-)
-
-_GAIN_STEP_CONFIG = _ItemStepConfig(
-    collection_key="gain_points",
-    item_label="gain point",
-    item_type="gain",
-    validate_endpoint="/api/validate/gain-points",
-    validate_cached_fn=lambda h, t: validate_gain_points_cached(h, t),
-    editing_index_key="editing_gain_index",
-    new_input_key="new_gain_input",
-    validated_key="gains_validated",
-    min_required=8,
-    step_heading="## Step 3: Identify Gain Points",
-    step_title="Step 3 Focus",
-    focus_prompt="Define gains as concrete outcomes, not generic wishes.",
-    checklist_tail=["Keep each gain independent", "Describe user-visible benefit"],
-    main_question="What outcomes and benefits do you desire from your work?",
-    add_label="Add a new gain point",
-    add_placeholder="Example: Having real-time visibility into project progress to make confident resource allocation decisions...",
-    empty_icon="G",
-    empty_title="No gain points added",
-    empty_description="Add your first gain point below to get started. Think about desired outcomes and benefits you want from your work.",
-    tip_step_name="gains",
-    suggestions_step_name="gains",
-    back_label="Back to Pain Points",
-    back_key="gain_back",
-    back_step=2,
-    next_label="Continue to Review",
-    next_key="gain_next",
-    next_step=4,
-)
-
-
-def render_pain_points():
-    """Render the pain points step."""
-    _render_item_collection_step(_PAIN_STEP_CONFIG)
-
-
-def render_gain_points():
-    """Render the gain points step."""
-    _render_item_collection_step(_GAIN_STEP_CONFIG)
-
-
-def render_review():
-    """Render the review and download page."""
-    st.markdown("## Step 4: Review and Export")
-    tip = get_coaching_tip("review")
-
-    main_col, rail_col = st.columns([2.05, 1], gap="large")
-    with rail_col:
-        render_step_rail(
-            step_title="Publishing",
-            focus_prompt="Treat this as a final artifact: clear, traceable, and ready to share.",
-            checks=[
-                f"{len(st.session_state.pain_points)} pains mapped",
-                f"{len(st.session_state.gain_points)} gains mapped",
-                "Export once satisfied",
-            ],
-            tip=tip,
+    with gain_col:
+        _items_column(
+            collection_key="gain_points",
+            item_type="gain",
+            item_label="gain point",
+            validate_endpoint="/api/validate/gain-points",
+            payload_key="gain_points",
+            validate_fn=_validate_gains_cached,
+            validated_key="gains_validated",
+            editing_key="editing_gain_index",
+            ideal_min=8,
         )
 
-    with main_col:
-        st.markdown("""
-            <div class="success-banner section-reveal stagger-2">
-                <h2>Canvas ready for publication</h2>
-                <p>Your canvas is complete. Review below, then download your document.</p>
-            </div>
-        """, unsafe_allow_html=True)
+    # Export bar
+    st.markdown("---")
+    render_export_bar()
 
-        st.markdown("### Publish-Ready Canvas")
-        safe_job_desc = html.escape(st.session_state.job_description)
-        st.markdown(f"""
-            <div class="summary-section section-reveal">
-                <h3>Core Job Statement</h3>
-                <p>{safe_job_desc}</p>
-            </div>
-        """, unsafe_allow_html=True)
 
-        pains_col, gains_col = st.columns(2, gap="large")
-        with pains_col:
-            st.markdown(f"""
-                <section class="publish-section section-reveal">
-                    <h4>Pain Signals ({len(st.session_state.pain_points)})</h4>
-                </section>
-            """, unsafe_allow_html=True)
-            for i, pain in enumerate(st.session_state.pain_points):
-                st.markdown(build_item_card_html(i, pain, "pain"), unsafe_allow_html=True)
+# ═══════════════════════════════════════════════════════════════════════════
+# Guided Mode (optional)
+# ═══════════════════════════════════════════════════════════════════════════
 
-        with gains_col:
-            st.markdown(f"""
-                <section class="publish-section section-reveal">
-                    <h4>Gain Signals ({len(st.session_state.gain_points)})</h4>
-                </section>
-            """, unsafe_allow_html=True)
-            for i, gain in enumerate(st.session_state.gain_points):
-                st.markdown(build_item_card_html(i, gain, "gain"), unsafe_allow_html=True)
+def _render_guided_progress():
+    """Render step progress indicator for guided mode."""
+    steps = ["Job Description", "Pain Points", "Gain Points", "Review"]
+    current = st.session_state.step - 1  # guided mode starts at step 1
 
-        st.markdown("---")
-        st.markdown("### Download Your Canvas")
+    parts = []
+    for i, name in enumerate(steps):
+        if i < current:
+            dot_cls, label_cls, indicator = "complete", "complete", "✓"
+        elif i == current:
+            dot_cls, label_cls, indicator = "active", "active", str(i + 1)
+        else:
+            dot_cls, label_cls, indicator = "", "", str(i + 1)
 
-        st.markdown('<div class="step-actions-bar section-reveal">', unsafe_allow_html=True)
-        col1, col2 = st.columns([1, 1])
+        line_html = ""
+        if i < len(steps) - 1:
+            line_cls = "complete" if i < current else ""
+            line_html = f'<div class="progress-line {line_cls}"></div>'
 
-        with col1:
-            if st.button("Back to Edit", use_container_width=True):
-                st.session_state.step = 3
+        parts.append(
+            f'<div class="progress-step">'
+            f'<div class="progress-step-inner">'
+            f'<div class="progress-dot {dot_cls}">{indicator}</div>'
+            f'<div class="progress-step-label {label_cls}">{name}</div>'
+            f'</div>{line_html}</div>'
+        )
+
+    st.markdown(
+        f'<div class="progress-bar" role="list">{"".join(parts)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _guided_step_nav(back_step: Optional[int], next_step: Optional[int],
+                     back_label: str = "Back", next_label: str = "Continue",
+                     next_disabled: bool = False):
+    """Render back/next navigation for guided mode."""
+    c1, c2 = st.columns(2)
+    with c1:
+        if back_step is not None:
+            if st.button(back_label, key=f"guided_back_{back_step}", use_container_width=True):
+                st.session_state.step = back_step
+                st.rerun()
+    with c2:
+        if next_step is not None:
+            if st.button(next_label, key=f"guided_next_{next_step}", use_container_width=True,
+                          type="primary", disabled=next_disabled):
+                st.session_state.step = next_step
                 st.rerun()
 
-        with col2:
-            try:
-                response = get_http_client().post(
-                    f"{API_BASE_URL}/api/generate-document",
-                    headers=get_api_headers(),
-                    json={
-                        "job_description": st.session_state.job_description,
-                        "pain_points": st.session_state.pain_points,
-                        "gain_points": st.session_state.gain_points,
-                        "title": "Value Proposition Canvas"
-                    }
-                )
-                if response.status_code == 200:
-                    st.download_button(
-                        label="Download Word document",
-                        data=response.content,
-                        file_name="Value_Proposition_Canvas.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True,
-                        type="primary"
-                    )
-                else:
-                    st.error("Failed to generate document. Please try again.")
-            except Exception as e:
-                st.error(f"Error connecting to server: {str(e)}")
-                st.info("Make sure the backend server is running: `uvicorn app.main:app --reload --port 8000`")
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Start over option
+
+def _guided_job_step():
+    """Guided mode: Job Description step."""
+    st.markdown("### Define the Core Job")
+    tip = _coaching_tip_cached("job")
+    if tip:
+        _render_coaching_tip(tip)
+
+    job = st.text_area(
+        "Describe the task, goal, or objective:",
+        value=st.session_state.job_description,
+        height=160,
+        placeholder="Example: I need to track my team's monthly expenses and generate financial reports efficiently...",
+        key="guided_job_input",
+    )
+    st.session_state.job_description = job
+
+    result = None
+    if job.strip():
+        result = _validate_job_cached(_content_hash(job), job)
+
+    if result and "error" not in result:
+        _render_quality_badge(result.get("score", 0))
+        for fb in result.get("feedback", []):
+            _render_validation_msg("warning", fb)
+        if result.get("suggestions"):
+            with st.expander("Suggestions"):
+                for s in result["suggestions"]:
+                    st.markdown(f"- {s}")
+        st.session_state.job_validated = result.get("valid", False)
+    elif result and "error" in result and job.strip():
+        st.caption("Validation service unavailable — your work is saved.")
+        st.session_state.job_validated = True
+
+    if st.button("Get AI suggestions", key="guided_job_suggest"):
+        with st.spinner("Thinking..."):
+            suggestions = call_api("/api/suggestions", "POST", {
+                "step": "job", "job_description": job,
+            })
+            if "error" not in suggestions:
+                st.info(suggestions.get("suggestions", "No suggestions."))
+            else:
+                st.warning(suggestions["error"])
+
     st.markdown("---")
+    _guided_step_nav(
+        back_step=None, next_step=2,
+        next_label="Continue to Pain Points",
+        next_disabled=not st.session_state.job_validated,
+    )
+    if not st.session_state.job_validated and job.strip():
+        if result and "error" not in result and result.get("feedback"):
+            st.caption("Address the feedback above before continuing.")
+
+
+def _guided_items_step(collection_key: str, item_type: str, item_label: str,
+                        validate_endpoint: str, payload_key: str, validate_fn,
+                        validated_key: str, editing_key: str, min_required: int,
+                        tip_step: str, suggest_step: str,
+                        back_step: int, next_step: int,
+                        back_label: str, next_label: str):
+    """Guided mode: Pain/Gain collection step."""
+    items = st.session_state.get(collection_key, [])
+    tip = _coaching_tip_cached(tip_step)
+    if tip:
+        _render_coaching_tip(tip)
+
+    st.markdown(f"You need at least **{min_required}** independent {item_label}s. Currently: **{len(items)}**/{min_required}")
+
+    # Item list with edit/delete
+    if items:
+        for i, text in enumerate(items):
+            if st.session_state.get(editing_key) == i:
+                with st.form(f"guided_edit_{item_type}_{i}", clear_on_submit=False):
+                    edited = st.text_input(f"Edit {item_label}", value=text,
+                                           key=f"guided_edit_text_{item_type}_{i}",
+                                           label_visibility="collapsed")
+                    c1, c2 = st.columns(2)
+                    save = c1.form_submit_button("Save", use_container_width=True)
+                    cancel = c2.form_submit_button("Cancel", use_container_width=True)
+                if save:
+                    clean = edited.strip()
+                    if clean and not _is_duplicate(clean, items, exclude=i):
+                        st.session_state[collection_key][i] = clean
+                        st.session_state[editing_key] = None
+                        st.toast(f"{item_label.title()} updated")
+                        st.rerun()
+                if cancel:
+                    st.session_state[editing_key] = None
+                    st.rerun()
+            else:
+                st.markdown(_build_item_html(i, text, item_type), unsafe_allow_html=True)
+                c1, c2 = st.columns([1, 1])
+                with c1:
+                    if st.button("Edit", key=f"guided_edit_{item_type}_btn_{i}",
+                                  use_container_width=True):
+                        st.session_state[editing_key] = i
+                        st.rerun()
+                with c2:
+                    if st.button("Delete", key=f"guided_del_{item_type}_btn_{i}",
+                                  use_container_width=True):
+                        st.session_state[collection_key].pop(i)
+                        st.toast(f"{item_label.title()} removed")
+                        st.rerun()
+    else:
+        _render_empty_state(f"No {item_label}s yet", f"Add your first {item_label} below.")
+
+    # Add form
+    with st.form(f"guided_add_{item_type}", clear_on_submit=True):
+        new_text = st.text_input(
+            f"Add a {item_label}:",
+            placeholder=f"Describe a specific {item_label}...",
+            key=f"guided_new_{item_type}",
+        )
+        submitted = st.form_submit_button(f"Add {item_label.title()}", use_container_width=True)
+
+    if submitted and new_text.strip():
+        clean = new_text.strip()
+        if not _is_duplicate(clean, items):
+            st.session_state[collection_key].append(clean)
+            st.toast(f"{item_label.title()} added")
+            st.rerun()
+        else:
+            st.warning("Duplicate entry.")
+
+    # Validation
+    if len(items) >= 2:
+        result = validate_fn(_content_hash(str(tuple(items))), tuple(items))
+        if result and "error" not in result:
+            st.session_state[validated_key] = result.get("valid", False)
+            for fb in result.get("overall_feedback", []):
+                _render_validation_msg("warning", fb)
+            independence = result.get("independence_check", {})
+            if independence and not independence.get("independent", True):
+                for issue in independence.get("issues", []):
+                    _render_validation_msg("error", issue.get("message", ""))
+        elif result and "error" in result:
+            st.session_state[validated_key] = True
+
+    # Suggestions
+    remaining = max(0, min_required - len(items))
+    if remaining > 0:
+        if st.button(f"Get AI suggestions for {remaining} more", key=f"guided_suggest_{item_type}"):
+            with st.spinner("Thinking..."):
+                suggestions = call_api("/api/suggestions", "POST", {
+                    "step": suggest_step,
+                    "job_description": st.session_state.job_description,
+                    "existing_items": items,
+                    "count_needed": remaining,
+                })
+                if "error" not in suggestions:
+                    st.info(suggestions.get("suggestions", "No suggestions."))
+                else:
+                    st.warning(suggestions["error"])
+
+    st.markdown("---")
+    can_proceed = len(items) >= min_required and st.session_state.get(validated_key, False)
+    _guided_step_nav(
+        back_step=back_step, next_step=next_step,
+        back_label=back_label, next_label=next_label,
+        next_disabled=not can_proceed,
+    )
+    if not can_proceed:
+        st.caption(f"Add {remaining} more unique {item_label}s to continue.")
+
+
+def _guided_review_step():
+    """Guided mode: Review and export step."""
+    st.markdown("""
+    <div class="success-banner">
+        <h2>Canvas ready</h2>
+        <p>Review your canvas below, then export.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Job
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown("### Job Statement")
+    st.markdown(html.escape(st.session_state.job_description))
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Pains & Gains side by side
+    p_col, g_col = st.columns(2, gap="large")
+    with p_col:
+        st.markdown(
+            f'<div class="col-header pain">'
+            f'<div class="col-header-icon pain">!</div>'
+            f'<span class="col-header-title">Pain Points</span>'
+            f'<span class="col-header-count">{len(st.session_state.pain_points)}</span></div>',
+            unsafe_allow_html=True,
+        )
+        for i, pain in enumerate(st.session_state.pain_points):
+            st.markdown(_build_item_html(i, pain, "pain"), unsafe_allow_html=True)
+
+    with g_col:
+        st.markdown(
+            f'<div class="col-header gain">'
+            f'<div class="col-header-icon gain">+</div>'
+            f'<span class="col-header-title">Gain Points</span>'
+            f'<span class="col-header-count">{len(st.session_state.gain_points)}</span></div>',
+            unsafe_allow_html=True,
+        )
+        for i, gain in enumerate(st.session_state.gain_points):
+            st.markdown(_build_item_html(i, gain, "gain"), unsafe_allow_html=True)
+
+    st.markdown("---")
+    render_export_bar()
+
+    _guided_step_nav(
+        back_step=3, next_step=None,
+        back_label="Back to Gains",
+    )
+
     if st.button("Start a new canvas", use_container_width=True):
-        clear_saved_session()
         reset_session_state(preserve_theme=True)
-        st.session_state.show_restore_prompt = False
         st.rerun()
 
 
-# ============ Main App ============
+def render_guided_mode():
+    """Render the step-by-step guided wizard."""
+    # Ensure step is at least 1 for guided mode
+    if st.session_state.step < 1:
+        st.session_state.step = 1
+
+    _render_guided_progress()
+
+    if st.session_state.step == 1:
+        _guided_job_step()
+    elif st.session_state.step == 2:
+        st.markdown("### Identify Pain Points")
+        _guided_items_step(
+            collection_key="pain_points", item_type="pain", item_label="pain point",
+            validate_endpoint="/api/validate/pain-points", payload_key="pain_points",
+            validate_fn=_validate_pains_cached, validated_key="pains_validated",
+            editing_key="editing_pain_index", min_required=7,
+            tip_step="pains", suggest_step="pains",
+            back_step=1, next_step=3,
+            back_label="Back to Job", next_label="Continue to Gains",
+        )
+    elif st.session_state.step == 3:
+        st.markdown("### Identify Gain Points")
+        _guided_items_step(
+            collection_key="gain_points", item_type="gain", item_label="gain point",
+            validate_endpoint="/api/validate/gain-points", payload_key="gain_points",
+            validate_fn=_validate_gains_cached, validated_key="gains_validated",
+            editing_key="editing_gain_index", min_required=8,
+            tip_step="gains", suggest_step="gains",
+            back_step=2, next_step=4,
+            back_label="Back to Pains", next_label="Continue to Review",
+        )
+    elif st.session_state.step == 4:
+        _guided_review_step()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Export Bar
+# ═══════════════════════════════════════════════════════════════════════════
+
+def render_export_bar():
+    """Render the export/download section."""
+    pains = st.session_state.get("pain_points", [])
+    gains = st.session_state.get("gain_points", [])
+    job = st.session_state.get("job_description", "")
+
+    label, label_class = _quality_level_label(len(pains), len(gains), job)
+
+    st.markdown(f'<div class="quality-label {label_class}" style="margin-bottom: 0.75rem;">Quality: {label}</div>', unsafe_allow_html=True)
+
+    if not job.strip() and not pains and not gains:
+        st.caption("Add content to enable export.")
+        return
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button(f"Generate Word ({label})", key="generate_doc_btn", type="primary",
+                      use_container_width=True):
+            with st.spinner("Generating document..."):
+                try:
+                    response = get_http_client().post(
+                        f"{API_BASE_URL}/api/generate-document",
+                        headers=get_api_headers(),
+                        json={
+                            "job_description": job,
+                            "pain_points": pains,
+                            "gain_points": gains,
+                            "title": "Value Proposition Canvas",
+                        },
+                    )
+                    if response.status_code == 200:
+                        st.session_state["_doc_data"] = response.content
+                        st.session_state["_doc_label"] = label
+                    else:
+                        st.error("Failed to generate document.")
+                except Exception as e:
+                    st.error(f"Connection error: {e}")
+                    st.caption("Make sure the backend is running.")
+
+        # Show download button only after generation
+        if st.session_state.get("_doc_data"):
+            st.download_button(
+                label=f"Download Word ({st.session_state.get('_doc_label', label)})",
+                data=st.session_state["_doc_data"],
+                file_name="Value_Proposition_Canvas.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True,
+            )
+
+    with col2:
+        if st.button("Start new canvas", key="new_canvas_btn", use_container_width=True):
+            st.session_state.pop("_doc_data", None)
+            st.session_state.pop("_doc_label", None)
+            reset_session_state(preserve_theme=True)
+            st.rerun()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DB Persistence
+# ═══════════════════════════════════════════════════════════════════════════
+
 def _save_canvas_to_db():
-    """Save current canvas state to the database via API."""
     token = st.session_state.get("auth_token")
     if not token:
         return
@@ -3056,7 +1019,6 @@ def _save_canvas_to_db():
 
 
 def _load_canvas_from_db():
-    """Load canvas state from the database if the user is authenticated."""
     token = st.session_state.get("auth_token")
     if not token:
         return
@@ -3073,11 +1035,14 @@ def _load_canvas_from_db():
         st.session_state.session_loaded = True
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Main
+# ═══════════════════════════════════════════════════════════════════════════
+
 def main():
-    """Main application entry point."""
     init_session_state()
 
-    # ---- Auth gate ----
+    # Auth gate
     if not check_auth():
         render_login_page()
         return
@@ -3097,45 +1062,62 @@ def main():
         _load_canvas_from_db()
         st.session_state.db_canvas_loaded = True
 
-    render_theme_picker()
-    apply_theme_styles()
-    inject_hotkeys_script()
-
-    # Logout button in sidebar
+    # Sidebar
     with st.sidebar:
         st.markdown(f"**{auth_user.get('display_name', 'User')}**")
         st.caption(auth_user.get("email", ""))
-        if st.button("Sign Out", key="logout_btn"):
+        st.markdown("---")
+
+        # Mode toggle
+        mode = st.radio(
+            "Mode",
+            ["Spatial Canvas", "Guided Wizard"],
+            index=0 if st.session_state.canvas_mode == "spatial" else 1,
+            key="mode_toggle",
+            help="Spatial: all sections visible at once. Guided: step-by-step flow.",
+        )
+        st.session_state.canvas_mode = "spatial" if mode == "Spatial Canvas" else "guided"
+
+        st.markdown("---")
+
+        # Quality thermometer
+        render_quality_thermometer()
+
+        st.markdown("---")
+
+        # Theme
+        theme = st.selectbox("Theme", list(THEME_CONFIGS.keys()),
+                              index=list(THEME_CONFIGS.keys()).index(st.session_state.theme_mode),
+                              key="theme_select")
+        st.session_state.theme_mode = theme
+
+        # Accessibility
+        st.checkbox("High Contrast", key="pref_high_contrast")
+        st.checkbox("Large Text", key="pref_large_text")
+
+        st.markdown("---")
+        if st.button("Sign Out", key="logout_btn", use_container_width=True):
             logout()
 
+    # Apply theme CSS after sidebar sets theme_mode
+    apply_theme()
+
+    # Main content
     render_header()
-    render_progress()
-    render_progress_narrative()
 
-    st.markdown("---")
+    if st.session_state.canvas_mode == "spatial":
+        render_spatial_canvas()
+    else:
+        render_guided_mode()
 
-    # Render current step
-    if st.session_state.step == 0:
-        render_welcome()
-    elif st.session_state.step == 1:
-        render_job_description()
-    elif st.session_state.step == 2:
-        render_pain_points()
-    elif st.session_state.step == 3:
-        render_gain_points()
-    elif st.session_state.step == 4:
-        render_review()
-
-    # Auto-save to DB when there's meaningful content
-    if AUTO_SAVE_ENABLED and st.session_state.step > 0 and st.session_state.step < 4:
-        has_content = (
-            st.session_state.job_description.strip() or
-            len(st.session_state.pain_points) > 0 or
-            len(st.session_state.gain_points) > 0
-        )
-        if has_content:
-            _save_canvas_to_db()
-            save_session_to_file()  # Keep local fallback
+    # Auto-save
+    has_content = (
+        st.session_state.job_description.strip()
+        or len(st.session_state.pain_points) > 0
+        or len(st.session_state.gain_points) > 0
+    )
+    if has_content:
+        _save_canvas_to_db()
 
 
 if __name__ == "__main__":

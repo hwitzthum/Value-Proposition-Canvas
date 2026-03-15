@@ -6,14 +6,19 @@ Uses an in-memory SQLite database for speed and isolation.
 import os
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 # Force test environment BEFORE importing app modules
-os.environ["DATABASE_URL"] = "sqlite:///./test.db"
+os.environ["DATABASE_URL"] = "sqlite://"
 os.environ["API_SECRET_KEY"] = ""  # Disable API key auth in tests
 os.environ["PYTHON_ENV"] = "development"
 os.environ["OPENAI_API_KEY"] = ""  # Disable OpenAI in tests
+os.environ["RATE_LIMIT_AUTH"] = "1000/minute"  # Effectively disable rate limiting in tests
+os.environ["RATE_LIMIT_REGISTER"] = "1000/hour"
+os.environ["RATE_LIMIT_CANVAS"] = "1000/minute"
+os.environ["RATE_LIMIT_ADMIN"] = "1000/minute"
 
 from app.database import Base, get_db  # noqa: E402
 from app.models import User, UserSession, Canvas  # noqa: E402
@@ -21,9 +26,21 @@ from app.auth import hash_password, create_session  # noqa: E402
 from app.main import app  # noqa: E402
 
 
-# Test database engine (SQLite in-memory per session)
-TEST_DATABASE_URL = "sqlite:///./test.db"
-test_engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
+# In-memory SQLite with StaticPool so all sessions share one connection
+test_engine = create_engine(
+    "sqlite://",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+
+
+@event.listens_for(test_engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
 TestSessionLocal = sessionmaker(bind=test_engine, autocommit=False, autoflush=False)
 
 

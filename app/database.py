@@ -61,6 +61,7 @@ def get_db() -> Session:
     try:
         yield db
     finally:
+        db.rollback()
         db.close()
 
 

@@ -12,6 +12,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
 logger = logging.getLogger(__name__)
 
 IS_PRODUCTION = os.getenv("PYTHON_ENV", "development") == "production"
@@ -93,3 +96,9 @@ def configure_logging():
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+# ---------------------------------------------------------------------------
+# Shared Rate Limiter (importable by route modules without circular deps)
+# ---------------------------------------------------------------------------
+limiter = Limiter(key_func=get_remote_address)

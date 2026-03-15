@@ -31,11 +31,7 @@ class QualityValidator:
     GAIN_WEIGHT = 0.35
 
     def __init__(self):
-        self.vectorizer = TfidfVectorizer(
-            stop_words='english',
-            ngram_range=(1, 2),
-            min_df=1
-        )
+        pass
 
     def validate_job_description(self, description: str) -> dict:
         """

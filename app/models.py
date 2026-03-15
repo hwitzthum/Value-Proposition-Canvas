@@ -124,7 +124,7 @@ class Canvas(Base):
     __tablename__ = "canvases"
 
     id = Column(GUID(), primary_key=True, default=_new_uuid)
-    user_id = Column(GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(200), default="Untitled Canvas", nullable=False)
     job_description = Column(Text, default="", nullable=False)
     pain_points = Column(PortableJSON(), default=list, nullable=False)

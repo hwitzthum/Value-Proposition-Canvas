@@ -61,14 +61,15 @@ class TestIndependence:
         assert len(issues) == 0
 
     def test_similar_items(self, validator):
-        # Use near-identical items to reliably trigger similarity detection
+        # Use identical items to reliably trigger similarity detection
         items = [
-            "Spending too much time on manual data entry each week",
-            "Spending too much time on manual data entry every day",
+            "Spending too much time on manual data entry into spreadsheets each week",
+            "Spending too much time on manual data entry into spreadsheets every week",
         ]
         independent, issues = validator.check_independence(items)
         # These should be flagged as similar (high TF-IDF overlap)
-        assert independent is False or len(issues) >= 0  # Similarity depends on threshold
+        assert independent is False
+        assert len(issues) >= 1
 
     def test_single_item(self, validator):
         independent, issues = validator.check_independence(["Just one item here"])

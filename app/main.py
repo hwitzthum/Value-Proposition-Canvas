@@ -17,8 +17,7 @@ from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from .validation import QualityValidator
@@ -28,6 +27,7 @@ from .security import (
     SecurityHeadersMiddleware,
     RequestSizeLimitMiddleware,
     configure_logging,
+    limiter,
 )
 from .routes.auth_routes import router as auth_router
 from .routes.canvas_routes import router as canvas_router
@@ -68,13 +68,12 @@ def sanitize_input(text: str) -> str:
     """Sanitize user input to prevent XSS and prompt injection."""
     if not text:
         return text
-    sanitized = html.escape(text)
     text_lower = text.lower()
     for pattern in DANGEROUS_PATTERNS:
         if re.search(pattern, text_lower, re.IGNORECASE):
-            logger.warning("Dangerous input pattern detected")
-            break
-    return sanitized
+            logger.warning("Dangerous input pattern detected and blocked")
+            raise ValueError("Input contains disallowed content.")
+    return html.escape(text)
 
 
 def sanitize_filename(name: str) -> str:
@@ -85,21 +84,6 @@ def sanitize_filename(name: str) -> str:
     # Limit length
     return safe[:100] if safe else "document"
 
-
-def validate_text_content(text: str, field_name: str, min_length: int = 1, max_length: int = 10000) -> str:
-    """Validate and sanitize text content."""
-    if not text or not text.strip():
-        raise ValueError(f"{field_name} cannot be empty")
-    text = text.strip()
-    if len(text) < min_length:
-        raise ValueError(f"{field_name} must be at least {min_length} characters")
-    if len(text) > max_length:
-        raise ValueError(f"{field_name} cannot exceed {max_length} characters")
-    return sanitize_input(text)
-
-
-# ============ Rate Limiting Setup ============
-limiter = Limiter(key_func=get_remote_address)
 
 # ============ Initialize FastAPI app ============
 app = FastAPI(

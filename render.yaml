@@ -77,5 +77,10 @@ services:
           type: web
           name: vpc-api
           property: hostport
+      - key: API_SECRET_KEY
+        fromService:
+          type: web
+          name: vpc-api
+          envVarKey: API_SECRET_KEY
       - key: PYTHON_ENV
         value: production

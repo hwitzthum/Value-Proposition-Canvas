@@ -4,9 +4,11 @@ Rate-limited at 5/min for auth actions, 3/hour for registration.
 """
 
 import logging
+import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth import (
@@ -33,11 +35,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+# Rate limiting — shared limiter from security module
+from ..security import limiter  # noqa: E402
+
+RATE_LIMIT_AUTH = os.getenv("RATE_LIMIT_AUTH", "5/minute")
+RATE_LIMIT_REGISTER = os.getenv("RATE_LIMIT_REGISTER", "3/hour")
+
 
 # ---------------------------------------------------------------------------
 # POST /api/auth/register
 # ---------------------------------------------------------------------------
 @router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit(RATE_LIMIT_REGISTER)
 async def register(request: Request, data: RegisterRequest, db: Session = Depends(get_db)):
     """Register a new user. Account starts in 'pending' status until admin approval."""
 
@@ -57,7 +66,15 @@ async def register(request: Request, data: RegisterRequest, db: Session = Depend
         status="pending",
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        # Race condition: another request registered this email concurrently
+        logger.info("Registration race for email: %s", data.email)
+        return MessageResponse(
+            message="If this email is not already registered, you will receive approval notification."
+        )
 
     logger.info("New user registered: %s (pending approval)", data.email)
     return MessageResponse(
@@ -69,6 +86,7 @@ async def register(request: Request, data: RegisterRequest, db: Session = Depend
 # POST /api/auth/login
 # ---------------------------------------------------------------------------
 @router.post("/login", response_model=AuthResponse)
+@limiter.limit(RATE_LIMIT_AUTH)
 async def login(request: Request, data: LoginRequest, db: Session = Depends(get_db)):
     """Authenticate and return a session token."""
 
@@ -106,8 +124,11 @@ async def login(request: Request, data: LoginRequest, db: Session = Depends(get_
             detail=f"Account is {user.status}. Contact an administrator.",
         )
 
-    # Create session
-    ip = request.client.host if request.client else None
+    # Create session — use X-Forwarded-For when behind a proxy
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    ip = forwarded.split(",")[0].strip() if forwarded else (
+        request.client.host if request.client else None
+    )
     token = create_session(db, user, ip_address=ip)
 
     logger.info("User logged in: %s", user.email)

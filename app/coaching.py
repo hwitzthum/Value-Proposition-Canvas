@@ -6,7 +6,7 @@ Provides intelligent suggestions and feedback using OpenAI API.
 import os
 import hashlib
 import logging
-from functools import lru_cache
+import threading
 from typing import List, Optional
 from dotenv import load_dotenv
 
@@ -31,22 +31,21 @@ SYSTEM_PROMPT_BOUNDARY = (
 )
 
 
-# ============ Performance: LRU Cache for OpenAI Responses ============
+# ============ Performance: Thread-Safe LRU Cache for OpenAI Responses ============
 # Cache up to 128 unique prompts to reduce API costs.
-# NOTE: api_key is NOT passed as a parameter to avoid leaking it into cache keys.
 _openai_response_cache: dict = {}
+_cache_lock = threading.Lock()
 _CACHE_MAX = 128
 
 
 def _cached_openai_call(cache_key: str, system_prompt: str, user_prompt: str,
-                        api_key: str, model: str) -> Optional[str]:
+                        client, model: str) -> Optional[str]:
     """Cached OpenAI API call. Returns None on error."""
-    # Check cache
-    if cache_key in _openai_response_cache:
-        return _openai_response_cache[cache_key]
+    with _cache_lock:
+        if cache_key in _openai_response_cache:
+            return _openai_response_cache[cache_key]
 
     try:
-        client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
             model=model,
             messages=[
@@ -58,11 +57,12 @@ def _cached_openai_call(cache_key: str, system_prompt: str, user_prompt: str,
         )
         result = response.choices[0].message.content
 
-        # Evict oldest if at capacity
-        if len(_openai_response_cache) >= _CACHE_MAX:
-            oldest_key = next(iter(_openai_response_cache))
-            del _openai_response_cache[oldest_key]
-        _openai_response_cache[cache_key] = result
+        with _cache_lock:
+            # Evict oldest if at capacity
+            if len(_openai_response_cache) >= _CACHE_MAX:
+                oldest_key = next(iter(_openai_response_cache))
+                del _openai_response_cache[oldest_key]
+            _openai_response_cache[cache_key] = result
 
         return result
     except Exception as e:
@@ -73,7 +73,7 @@ def _cached_openai_call(cache_key: str, system_prompt: str, user_prompt: str,
 def _generate_cache_key(system_prompt: str, user_prompt: str) -> str:
     """Generate a cache key from prompts."""
     combined = f"{system_prompt}|{user_prompt}"
-    return hashlib.md5(combined.encode()).hexdigest()
+    return hashlib.sha256(combined.encode()).hexdigest()
 
 
 class CoachingEngine:
@@ -104,7 +104,7 @@ class CoachingEngine:
 
         cache_key = _generate_cache_key(hardened_system_prompt, user_prompt)
         return _cached_openai_call(
-            cache_key, hardened_system_prompt, user_prompt, self.api_key, self.model
+            cache_key, hardened_system_prompt, user_prompt, self.client, self.model
         )
     
     def get_job_description_suggestions(self, current_description: str) -> dict:

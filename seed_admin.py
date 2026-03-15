@@ -2,15 +2,14 @@
 """
 Create the first admin user.
 
-Usage:
-    python seed_admin.py --email admin@example.com --password 'SecureP@ss1'
-
-Or with prompts:
+Usage (interactive — always prompts for password):
     python seed_admin.py
+    python seed_admin.py --email admin@example.com --name Admin
 """
 
 import argparse
 import getpass
+import re
 import sys
 
 from dotenv import load_dotenv
@@ -21,12 +20,15 @@ from app.database import get_db_context, create_tables  # noqa: E402
 from app.auth import hash_password  # noqa: E402
 from app.models import User  # noqa: E402
 
+_PASSWORD_PATTERN = re.compile(
+    r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>\/?]).{10,}$"
+)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Create the first admin user.")
     parser.add_argument("--email", help="Admin email address")
     parser.add_argument("--name", help="Display name", default="Admin")
-    parser.add_argument("--password", help="Password (prompted if not provided)")
     args = parser.parse_args()
 
     email = args.email or input("Admin email: ").strip()
@@ -35,9 +37,14 @@ def main():
         sys.exit(1)
 
     name = args.name or input("Display name [Admin]: ").strip() or "Admin"
-    password = args.password or getpass.getpass("Password: ")
-    if len(password) < 10:
-        print("Password must be at least 10 characters.")
+
+    # Always prompt for password interactively (never accept via CLI args)
+    password = getpass.getpass("Password: ")
+    if not _PASSWORD_PATTERN.match(password):
+        print(
+            "Password must be at least 10 characters and include "
+            "uppercase, lowercase, digit, and special character."
+        )
         sys.exit(1)
 
     # Ensure tables exist

@@ -135,3 +135,59 @@ class TestMe:
     def test_me_invalid_token(self, client):
         resp = client.get("/api/auth/me", headers=auth_headers("invalid"))
         assert resp.status_code == 401
+
+
+class TestSessionCleanup:
+    def test_expired_sessions_cleaned_on_login(self, client, db):
+        """Logging in should clean up expired sessions for that user."""
+        from datetime import datetime, timedelta, timezone
+        from app.models import User, UserSession
+        from app.auth import hash_password
+
+        password = "TestPass1!xy"
+        user = User(
+            email="cleanup@example.com",
+            display_name="Cleanup",
+            password_hash=hash_password(password),
+            status="active",
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        # Create an expired session manually
+        expired = UserSession(
+            user_id=user.id,
+            token="expired-token-xyz",
+            expires_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        )
+        db.add(expired)
+        db.commit()
+
+        # Login should trigger cleanup
+        resp = client.post("/api/auth/login", json={
+            "email": "cleanup@example.com",
+            "password": password,
+        })
+        assert resp.status_code == 200
+
+        # Expired session should be gone
+        remaining = db.query(UserSession).filter(
+            UserSession.user_id == user.id,
+            UserSession.token == "expired-token-xyz",
+        ).first()
+        assert remaining is None
+
+
+class TestRegistrationRace:
+    def test_duplicate_registration_returns_success_message(self, client, active_user):
+        """Duplicate email registration should return same message (no enumeration)."""
+        user, _ = active_user
+        resp = client.post("/api/auth/register", json={
+            "email": user.email,
+            "display_name": "Dup",
+            "password": "SecureP@ss1!",
+        })
+        # Should return 201 with same generic message
+        assert resp.status_code == 201
+        assert "message" in resp.json()

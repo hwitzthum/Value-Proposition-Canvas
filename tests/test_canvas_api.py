@@ -100,3 +100,70 @@ class TestCanvasDelete:
             headers=auth_headers(auth_token),
         )
         assert resp.status_code == 404
+
+    def test_delete_current_then_get_creates_new(self, client, auth_token):
+        """Deleting current canvas should result in a new one on next GET."""
+        resp = client.get("/api/canvases/current", headers=auth_headers(auth_token))
+        old_id = resp.json()["id"]
+
+        client.delete(f"/api/canvases/{old_id}", headers=auth_headers(auth_token))
+
+        resp = client.get("/api/canvases/current", headers=auth_headers(auth_token))
+        assert resp.status_code == 200
+        assert resp.json()["id"] != old_id
+
+
+class TestCanvasPagination:
+    def test_list_with_pagination(self, client, auth_token):
+        """Create multiple canvases and verify pagination works."""
+        # Create 3 canvases
+        client.get("/api/canvases/current", headers=auth_headers(auth_token))
+        client.post("/api/canvases/", headers=auth_headers(auth_token))
+        client.post("/api/canvases/", headers=auth_headers(auth_token))
+
+        # Get first page (limit=2)
+        resp = client.get("/api/canvases/?limit=2", headers=auth_headers(auth_token))
+        assert resp.status_code == 200
+        assert len(resp.json()["canvases"]) == 2
+
+        # Get second page
+        resp = client.get("/api/canvases/?skip=2&limit=2", headers=auth_headers(auth_token))
+        assert resp.status_code == 200
+        assert len(resp.json()["canvases"]) == 1
+
+
+class TestCanvasIsCurrentConsistency:
+    def test_create_canvas_uncurrents_previous(self, client, auth_token):
+        """Creating a new canvas should mark the old one as not current."""
+        resp1 = client.get("/api/canvases/current", headers=auth_headers(auth_token))
+        first_id = resp1.json()["id"]
+
+        client.post("/api/canvases/", headers=auth_headers(auth_token))
+
+        # List all and check only one is current
+        resp = client.get("/api/canvases/", headers=auth_headers(auth_token))
+        canvases = resp.json()["canvases"]
+        current_canvases = [c for c in canvases if c["is_current"]]
+        assert len(current_canvases) == 1
+        assert current_canvases[0]["id"] != first_id
+
+
+class TestSaveLoadRoundTrip:
+    def test_save_and_reload_preserves_data(self, client, auth_token):
+        """Saving a canvas and reloading should return the same data."""
+        save_data = {
+            "job_description": "Improve deployment pipeline for faster releases",
+            "pain_points": ["Slow CI builds", "Manual rollback procedures"],
+            "gain_points": ["Automated deployments", "Faster feedback loops"],
+            "wizard_step": 3,
+            "title": "DevOps Canvas",
+        }
+        client.put("/api/canvases/current", headers=auth_headers(auth_token), json=save_data)
+
+        resp = client.get("/api/canvases/current", headers=auth_headers(auth_token))
+        data = resp.json()
+        assert data["job_description"] == save_data["job_description"]
+        assert data["pain_points"] == save_data["pain_points"]
+        assert data["gain_points"] == save_data["gain_points"]
+        assert data["wizard_step"] == save_data["wizard_step"]
+        assert data["title"] == save_data["title"]

@@ -4,12 +4,13 @@ Requires admin authentication.
 """
 
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_admin
@@ -22,8 +23,11 @@ from ..schemas import (
     MessageResponse,
     StatusUpdateRequest,
 )
+from ..security import limiter
 
 logger = logging.getLogger(__name__)
+
+RATE_LIMIT_ADMIN = os.getenv("RATE_LIMIT_ADMIN", "30/minute")
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -32,32 +36,42 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 # GET /api/admin/users
 # ---------------------------------------------------------------------------
 @router.get("/users", response_model=list[AdminUserListItem])
+@limiter.limit(RATE_LIMIT_ADMIN)
 async def list_users(
+    request: Request,
     status_filter: Optional[str] = Query(None, alias="status", pattern=r"^(pending|active|paused|declined)$"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    """List all users, optionally filtered by status."""
-    query = db.query(User)
+    """List all users with canvas counts, paginated."""
+    # Subquery for canvas counts — avoids N+1
+    canvas_counts = (
+        db.query(Canvas.user_id, func.count(Canvas.id).label("canvas_count"))
+        .group_by(Canvas.user_id)
+        .subquery()
+    )
+
+    query = (
+        db.query(User, func.coalesce(canvas_counts.c.canvas_count, 0).label("canvas_count"))
+        .outerjoin(canvas_counts, User.id == canvas_counts.c.user_id)
+    )
     if status_filter:
         query = query.filter(User.status == status_filter)
-    query = query.order_by(User.created_at.desc())
+    query = query.order_by(User.created_at.desc()).offset(skip).limit(limit)
 
-    users = query.all()
-
-    # Attach canvas counts
     result = []
-    for u in users:
-        canvas_count = db.query(func.count(Canvas.id)).filter(Canvas.user_id == u.id).scalar()
+    for user, count in query.all():
         item = AdminUserListItem(
-            id=u.id,
-            email=u.email,
-            display_name=u.display_name,
-            status=u.status,
-            is_admin=u.is_admin,
-            created_at=u.created_at,
-            last_login_at=u.last_login_at,
-            canvas_count=canvas_count or 0,
+            id=user.id,
+            email=user.email,
+            display_name=user.display_name,
+            status=user.status,
+            is_admin=user.is_admin,
+            created_at=user.created_at,
+            last_login_at=user.last_login_at,
+            canvas_count=count,
         )
         result.append(item)
 
@@ -68,7 +82,9 @@ async def list_users(
 # GET /api/admin/users/{user_id}
 # ---------------------------------------------------------------------------
 @router.get("/users/{user_id}", response_model=AdminUserDetail)
+@limiter.limit(RATE_LIMIT_ADMIN)
 async def get_user_detail(
+    request: Request,
     user_id: UUID,
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
@@ -100,7 +116,9 @@ async def get_user_detail(
 # PATCH /api/admin/users/{user_id}/status
 # ---------------------------------------------------------------------------
 @router.patch("/users/{user_id}/status", response_model=MessageResponse)
+@limiter.limit(RATE_LIMIT_ADMIN)
 async def update_user_status(
+    request: Request,
     user_id: UUID,
     data: StatusUpdateRequest,
     admin: User = Depends(get_current_admin),
@@ -139,23 +157,28 @@ async def update_user_status(
 # GET /api/admin/stats
 # ---------------------------------------------------------------------------
 @router.get("/stats", response_model=AdminStatsResponse)
+@limiter.limit(RATE_LIMIT_ADMIN)
 async def get_stats(
+    request: Request,
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    """Dashboard statistics."""
-    total = db.query(func.count(User.id)).scalar()
-    pending = db.query(func.count(User.id)).filter(User.status == "pending").scalar()
-    active = db.query(func.count(User.id)).filter(User.status == "active").scalar()
-    paused = db.query(func.count(User.id)).filter(User.status == "paused").scalar()
-    declined = db.query(func.count(User.id)).filter(User.status == "declined").scalar()
-    canvases = db.query(func.count(Canvas.id)).scalar()
+    """Dashboard statistics — collapsed to 2 queries instead of 6."""
+    stats = db.query(
+        func.count(User.id).label("total"),
+        func.sum(case((User.status == "pending", 1), else_=0)).label("pending"),
+        func.sum(case((User.status == "active", 1), else_=0)).label("active"),
+        func.sum(case((User.status == "paused", 1), else_=0)).label("paused"),
+        func.sum(case((User.status == "declined", 1), else_=0)).label("declined"),
+    ).one()
+
+    canvas_total = db.query(func.count(Canvas.id)).scalar()
 
     return AdminStatsResponse(
-        total_users=total or 0,
-        pending_users=pending or 0,
-        active_users=active or 0,
-        paused_users=paused or 0,
-        declined_users=declined or 0,
-        total_canvases=canvases or 0,
+        total_users=stats.total or 0,
+        pending_users=int(stats.pending or 0),
+        active_users=int(stats.active or 0),
+        paused_users=int(stats.paused or 0),
+        declined_users=int(stats.declined or 0),
+        total_canvases=canvas_total or 0,
     )
