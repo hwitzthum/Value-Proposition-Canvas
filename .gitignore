@@ -56,6 +56,7 @@ coverage.xml
 htmlcov/
 nosetests.xml
 pytestdebug.log
+*.db
 
 # -----------------------------------------------------------------------------
 # Logs and runtime files
