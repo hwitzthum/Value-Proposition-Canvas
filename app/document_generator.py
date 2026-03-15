@@ -2,6 +2,8 @@
 Document Generator module for creating Word documents from completed canvases.
 """
 
+import threading
+
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -13,15 +15,16 @@ from datetime import datetime
 
 class DocumentGenerator:
     """Generates professional Word documents from Value Proposition Canvas data."""
-    
+
     # Color scheme
     PRIMARY_COLOR = RGBColor(79, 70, 229)  # Indigo
     SUCCESS_COLOR = RGBColor(16, 185, 129)  # Emerald
     WARNING_COLOR = RGBColor(245, 158, 11)  # Amber
     TEXT_COLOR = RGBColor(31, 41, 55)  # Gray-800
-    
+
     def __init__(self):
         self.document = None
+        self._lock = threading.Lock()
     
     def _setup_styles(self):
         """Set up custom styles for the document."""
@@ -143,20 +146,17 @@ class DocumentGenerator:
         run.font.color.rgb = RGBColor(156, 163, 175)
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    def generate(self, job_description: str, pain_points: List[str], 
+    def generate(self, job_description: str, pain_points: List[str],
                  gain_points: List[str], title: str = "Work Process Canvas") -> BytesIO:
         """
         Generate a Word document from the canvas data.
-        
-        Args:
-            job_description: The job description
-            pain_points: List of pain points
-            gain_points: List of gain points
-            title: Document title
-            
-        Returns:
-            BytesIO object containing the Word document
+        Thread-safe: uses a lock to prevent concurrent access to self.document.
         """
+        with self._lock:
+            return self._generate_impl(job_description, pain_points, gain_points, title)
+
+    def _generate_impl(self, job_description: str, pain_points: List[str],
+                       gain_points: List[str], title: str) -> BytesIO:
         self.document = Document()
         
         # Set up styles

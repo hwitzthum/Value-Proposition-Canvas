@@ -7,6 +7,7 @@ import os
 import html
 import json
 import hashlib
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 import streamlit as st
@@ -20,7 +21,14 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
+# ============ Auth & Canvas API imports ============
+from auth_ui import check_auth, render_login_page, render_pending_page, render_blocked_page, logout  # noqa: E402
+from canvas_api import CanvasAPIClient  # noqa: E402
+
 # ============ Session Persistence Configuration ============
+# File-based persistence kept as fallback for unauthenticated/offline mode
 SESSION_FILE = Path.home() / ".value_proposition_canvas_session.json"
 AUTO_SAVE_ENABLED = True
 
@@ -1858,7 +1866,7 @@ def save_session_to_file():
             json.dump(session_data, f, indent=2)
         return True
     except Exception as e:
-        print(f"Error saving session: {e}")
+        logger.error("Error saving session: %s", e)
         return False
 
 
@@ -1869,7 +1877,7 @@ def load_session_from_file() -> Optional[dict]:
             with open(SESSION_FILE, "r") as f:
                 return json.load(f)
     except Exception as e:
-        print(f"Error loading session: {e}")
+        logger.error("Error loading session: %s", e)
     return None
 
 
@@ -1999,9 +2007,13 @@ def get_http_client() -> httpx.Client:
 
 # ============ API Helpers ============
 def get_api_headers() -> dict:
-    """Get API headers including authentication if configured."""
+    """Get API headers including authentication."""
     headers = {"Content-Type": "application/json"}
-    if API_SECRET_KEY:
+    # Prefer Bearer token (user auth) over API key
+    auth_token = st.session_state.get("auth_token")
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    elif API_SECRET_KEY:
         headers["X-API-Key"] = API_SECRET_KEY
     return headers
 
@@ -2822,6 +2834,7 @@ def _render_item_collection_step(cfg: _ItemStepConfig):
         elif len(items) < 2:
             st.session_state[cfg.validated_key] = False
 
+        remaining = max(0, cfg.min_required - len(items))
         if remaining > 0:
             if st.button(f"Get suggestions for {remaining} more {cfg.item_label}s", key=f"{cfg.item_type}_suggestions"):
                 with st.spinner("Getting suggestions..."):
@@ -2991,6 +3004,7 @@ def render_review():
             try:
                 response = get_http_client().post(
                     f"{API_BASE_URL}/api/generate-document",
+                    headers=get_api_headers(),
                     json={
                         "job_description": st.session_state.job_description,
                         "pain_points": st.session_state.pain_points,
@@ -3024,12 +3038,75 @@ def render_review():
 
 
 # ============ Main App ============
+def _save_canvas_to_db():
+    """Save current canvas state to the database via API."""
+    token = st.session_state.get("auth_token")
+    if not token:
+        return
+    api = CanvasAPIClient(API_BASE_URL, token)
+    api.save_current({
+        "job_description": st.session_state.get("job_description", ""),
+        "pain_points": st.session_state.get("pain_points", []),
+        "gain_points": st.session_state.get("gain_points", []),
+        "wizard_step": st.session_state.get("step", 0),
+        "job_validated": st.session_state.get("job_validated", False),
+        "pains_validated": st.session_state.get("pains_validated", False),
+        "gains_validated": st.session_state.get("gains_validated", False),
+    })
+
+
+def _load_canvas_from_db():
+    """Load canvas state from the database if the user is authenticated."""
+    token = st.session_state.get("auth_token")
+    if not token:
+        return
+    api = CanvasAPIClient(API_BASE_URL, token)
+    canvas = api.get_current()
+    if canvas:
+        st.session_state.step = canvas.get("wizard_step", 0)
+        st.session_state.job_description = canvas.get("job_description", "")
+        st.session_state.pain_points = list(canvas.get("pain_points", []))
+        st.session_state.gain_points = list(canvas.get("gain_points", []))
+        st.session_state.job_validated = canvas.get("job_validated", False)
+        st.session_state.pains_validated = canvas.get("pains_validated", False)
+        st.session_state.gains_validated = canvas.get("gains_validated", False)
+        st.session_state.session_loaded = True
+
+
 def main():
     """Main application entry point."""
     init_session_state()
+
+    # ---- Auth gate ----
+    if not check_auth():
+        render_login_page()
+        return
+
+    auth_user = st.session_state.get("auth_user", {})
+    user_status = auth_user.get("status", "active")
+
+    if user_status == "pending":
+        render_pending_page()
+        return
+    if user_status in ("paused", "declined"):
+        render_blocked_page(user_status)
+        return
+
+    # Load canvas from DB on first load
+    if not st.session_state.get("db_canvas_loaded"):
+        _load_canvas_from_db()
+        st.session_state.db_canvas_loaded = True
+
     render_theme_picker()
     apply_theme_styles()
     inject_hotkeys_script()
+
+    # Logout button in sidebar
+    with st.sidebar:
+        st.markdown(f"**{auth_user.get('display_name', 'User')}**")
+        st.caption(auth_user.get("email", ""))
+        if st.button("Sign Out", key="logout_btn"):
+            logout()
 
     render_header()
     render_progress()
@@ -3049,7 +3126,7 @@ def main():
     elif st.session_state.step == 4:
         render_review()
 
-    # Auto-save session when there's meaningful content (not on welcome or review step)
+    # Auto-save to DB when there's meaningful content
     if AUTO_SAVE_ENABLED and st.session_state.step > 0 and st.session_state.step < 4:
         has_content = (
             st.session_state.job_description.strip() or
@@ -3057,7 +3134,8 @@ def main():
             len(st.session_state.gain_points) > 0
         )
         if has_content:
-            save_session_to_file()
+            _save_canvas_to_db()
+            save_session_to_file()  # Keep local fallback
 
 
 if __name__ == "__main__":

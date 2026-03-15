@@ -134,9 +134,13 @@ class QualityValidator:
         if len(items) < 2:
             return True, []
 
-        # Create TF-IDF vectors
+        # Create a fresh vectorizer per call to avoid thread-safety issues
+        # (the shared self.vectorizer is mutated by fit_transform)
         try:
-            tfidf_matrix = self.vectorizer.fit_transform(items)
+            vectorizer = TfidfVectorizer(
+                stop_words='english', ngram_range=(1, 2), min_df=1
+            )
+            tfidf_matrix = vectorizer.fit_transform(items)
             similarity_matrix = cosine_similarity(tfidf_matrix)
         except Exception:
             # If vectorization fails, assume items are independent

@@ -1,0 +1,81 @@
+# Render Blueprint – Infrastructure as Code
+# Deploy with: https://render.com/deploy
+# Docs: https://docs.render.com/infrastructure-as-code
+
+databases:
+  - name: vpc-db
+    plan: free
+    databaseName: vpc
+    user: vpc_user
+    region: frankfurt
+
+services:
+  # FastAPI Backend
+  - type: web
+    name: vpc-api
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install uv && uv sync --no-dev
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: vpc-db
+          property: connectionString
+      - key: PYTHON_ENV
+        value: production
+      - key: OPENAI_API_KEY
+        sync: false  # Set manually in dashboard
+      - key: API_SECRET_KEY
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        value: https://vpc-app.onrender.com,https://vpc-admin.onrender.com
+      - key: SESSION_EXPIRY_HOURS
+        value: "24"
+      - key: RATE_LIMIT_AUTH
+        value: "5/minute"
+      - key: RATE_LIMIT_AI
+        value: "10/minute"
+      - key: RATE_LIMIT_VALIDATION
+        value: "60/minute"
+
+  # Streamlit Frontend
+  - type: web
+    name: vpc-app
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install uv && uv sync --no-dev
+    startCommand: streamlit run ui/streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: API_BASE_URL
+        fromService:
+          type: web
+          name: vpc-api
+          property: hostport
+      - key: API_SECRET_KEY
+        fromService:
+          type: web
+          name: vpc-api
+          envVarKey: API_SECRET_KEY
+      - key: PYTHON_ENV
+        value: production
+
+  # Admin Dashboard
+  - type: web
+    name: vpc-admin
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install uv && uv sync --no-dev
+    startCommand: streamlit run admin/admin_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: API_BASE_URL
+        fromService:
+          type: web
+          name: vpc-api
+          property: hostport
+      - key: PYTHON_ENV
+        value: production

@@ -3,16 +3,19 @@ FastAPI Backend for Value Proposition Canvas Coaching Application.
 Provides endpoints for validation, coaching suggestions, and document generation.
 """
 
+import io
+import logging
 import os
 import re
 import html
+import secrets
+
 from fastapi import FastAPI, HTTPException, Request, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
-import io
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -21,23 +24,35 @@ from slowapi.errors import RateLimitExceeded
 from .validation import QualityValidator
 from .coaching import CoachingEngine
 from .document_generator import DocumentGenerator
+from .security import (
+    SecurityHeadersMiddleware,
+    RequestSizeLimitMiddleware,
+    configure_logging,
+)
+from .routes.auth_routes import router as auth_router
+from .routes.canvas_routes import router as canvas_router
+from .routes.admin_routes import router as admin_router
+
+# Configure structured logging before anything else
+configure_logging()
+logger = logging.getLogger(__name__)
 
 # ============ Configuration ============
-# Load allowed origins from environment (comma-separated list)
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:8501,http://127.0.0.1:8501"
 ).split(",")
 
-# Optional API key for authentication (if set, all endpoints require it)
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
 
+IS_PRODUCTION = os.getenv("PYTHON_ENV", "development") == "production"
+
 # Rate limiting configuration
-RATE_LIMIT_AI = os.getenv("RATE_LIMIT_AI", "10/minute")  # AI endpoints
-RATE_LIMIT_VALIDATION = os.getenv("RATE_LIMIT_VALIDATION", "60/minute")  # Validation endpoints
+RATE_LIMIT_AI = os.getenv("RATE_LIMIT_AI", "10/minute")
+RATE_LIMIT_VALIDATION = os.getenv("RATE_LIMIT_VALIDATION", "60/minute")
+RATE_LIMIT_AUTH = os.getenv("RATE_LIMIT_AUTH", "5/minute")
 
 # ============ Security Utilities ============
-# Patterns that could indicate prompt injection or XSS attacks
 DANGEROUS_PATTERNS = [
     r'<script[^>]*>',
     r'javascript:',
@@ -48,38 +63,40 @@ DANGEROUS_PATTERNS = [
     r'disregard\s+(all\s+)?(previous|prior)',
 ]
 
+
 def sanitize_input(text: str) -> str:
     """Sanitize user input to prevent XSS and prompt injection."""
     if not text:
         return text
-
-    # HTML escape to prevent XSS
     sanitized = html.escape(text)
-
-    # Check for dangerous patterns (log but don't block - just escape)
     text_lower = text.lower()
     for pattern in DANGEROUS_PATTERNS:
         if re.search(pattern, text_lower, re.IGNORECASE):
-            # Pattern detected - the HTML escaping already handles XSS
-            # For prompt injection, the AI provider should handle it
+            logger.warning("Dangerous input pattern detected")
             break
-
     return sanitized
+
+
+def sanitize_filename(name: str) -> str:
+    """Sanitize a filename to prevent Content-Disposition header injection."""
+    # Remove any characters that are not alphanumeric, space, hyphen, or underscore
+    safe = re.sub(r'[^\w\s\-]', '', name)
+    safe = safe.replace(' ', '_')
+    # Limit length
+    return safe[:100] if safe else "document"
+
 
 def validate_text_content(text: str, field_name: str, min_length: int = 1, max_length: int = 10000) -> str:
     """Validate and sanitize text content."""
     if not text or not text.strip():
         raise ValueError(f"{field_name} cannot be empty")
-
     text = text.strip()
-
     if len(text) < min_length:
         raise ValueError(f"{field_name} must be at least {min_length} characters")
-
     if len(text) > max_length:
         raise ValueError(f"{field_name} cannot exceed {max_length} characters")
-
     return sanitize_input(text)
+
 
 # ============ Rate Limiting Setup ============
 limiter = Limiter(key_func=get_remote_address)
@@ -88,43 +105,83 @@ limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(
     title="Value Proposition Canvas API",
     description="AI-powered coaching for creating high-quality Value Proposition Canvases",
-    version="1.0.0"
+    version="1.0.0",
+    # Disable Swagger/ReDoc in production
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
 )
 
 # Add rate limiter to app state
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# ============ CORS Configuration (Restricted) ============
+# ============ Middleware (order matters: last added = first executed) ============
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-API-Key"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
 )
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestSizeLimitMiddleware)
 
-# ============ API Key Authentication ============
+
+# ============ Custom Error Handlers ============
+@app.exception_handler(422)
+async def validation_error_handler(request: Request, exc):
+    """Don't leak Pydantic validation details in production."""
+    if IS_PRODUCTION:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "Invalid request data."},
+        )
+    # In development, return the full error
+    from fastapi.exceptions import RequestValidationError
+    if isinstance(exc, RequestValidationError):
+        return JSONResponse(
+            status_code=422,
+            content={"detail": exc.errors()},
+        )
+    return JSONResponse(status_code=422, content={"detail": "Validation error."})
+
+
+@app.exception_handler(500)
+async def internal_error_handler(request: Request, exc):
+    """Never leak stack traces in production."""
+    logger.exception("Unhandled server error")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error."},
+    )
+
+
+# ============ API Key Authentication (timing-safe) ============
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
+
 async def verify_api_key(api_key: Optional[str] = Security(api_key_header)) -> bool:
-    """Verify API key if authentication is enabled."""
-    # If no API_SECRET_KEY is configured, authentication is disabled
+    """Verify API key using timing-safe comparison."""
     if not API_SECRET_KEY:
         return True
-
-    # If API key is configured, require it
-    if not api_key or api_key != API_SECRET_KEY:
+    if not api_key or not secrets.compare_digest(api_key, API_SECRET_KEY):
         raise HTTPException(
             status_code=403,
-            detail="Invalid or missing API key. Provide X-API-Key header."
+            detail="Invalid or missing API key."
         )
     return True
+
 
 # Initialize services
 validator = QualityValidator()
 coach = CoachingEngine()
 doc_generator = DocumentGenerator()
+
+# ============ Include Routers ============
+app.include_router(auth_router)
+app.include_router(canvas_router)
+app.include_router(admin_router)
 
 
 # ============ Request/Response Models ============
@@ -251,36 +308,32 @@ async def get_config(request: Request):
 @limiter.limit(RATE_LIMIT_VALIDATION)
 async def validate_job_description(request: Request, data: JobDescriptionRequest):
     """Validate and provide feedback on job description."""
-    result = validator.validate_job_description(data.description)
-    return result
+    return validator.validate_job_description(data.description)
 
 
 @app.post("/api/validate/pain-points", dependencies=[Depends(verify_api_key)])
 @limiter.limit(RATE_LIMIT_VALIDATION)
 async def validate_pain_points(request: Request, data: PainPointsRequest):
     """Validate pain points for quality and independence."""
-    result = validator.validate_pain_points(data.pain_points)
-    return result
+    return validator.validate_pain_points(data.pain_points)
 
 
 @app.post("/api/validate/gain-points", dependencies=[Depends(verify_api_key)])
 @limiter.limit(RATE_LIMIT_VALIDATION)
 async def validate_gain_points(request: Request, data: GainPointsRequest):
     """Validate gain points for quality and independence."""
-    result = validator.validate_gain_points(data.gain_points)
-    return result
+    return validator.validate_gain_points(data.gain_points)
 
 
 @app.post("/api/validate/canvas", dependencies=[Depends(verify_api_key)])
 @limiter.limit(RATE_LIMIT_VALIDATION)
 async def validate_canvas(request: Request, data: CanvasValidationRequest):
     """Validate the complete canvas."""
-    result = validator.validate_complete_canvas(
+    return validator.validate_complete_canvas(
         data.job_description,
         data.pain_points,
         data.gain_points
     )
-    return result
 
 
 @app.post("/api/suggestions", dependencies=[Depends(verify_api_key)])
@@ -302,16 +355,15 @@ async def get_suggestions(request: Request, data: SuggestionsRequest):
             data.count_needed or 3
         )
     else:
-        raise HTTPException(status_code=400, detail=f"Unknown step: {data.step}")
+        raise HTTPException(status_code=400, detail="Unknown step.")
 
 
 @app.get("/api/coaching-tip/{step}", dependencies=[Depends(verify_api_key)])
 @limiter.limit(RATE_LIMIT_VALIDATION)
 async def get_coaching_tip(request: Request, step: str):
     """Get a contextual coaching tip for the specified step."""
-    # Validate step parameter
     if step not in ('job', 'pains', 'gains', 'review', 'welcome'):
-        raise HTTPException(status_code=400, detail=f"Invalid step: {step}")
+        raise HTTPException(status_code=400, detail="Invalid step.")
     tip = coach.get_coaching_tip(step)
     return {"step": step, "tip": tip}
 
@@ -320,7 +372,6 @@ async def get_coaching_tip(request: Request, step: str):
 @limiter.limit(RATE_LIMIT_AI)
 async def generate_document(request: Request, data: GenerateDocumentRequest):
     """Generate a Word document from the completed canvas."""
-    # Validate the canvas first
     validation = validator.validate_complete_canvas(
         data.job_description,
         data.pain_points,
@@ -330,13 +381,9 @@ async def generate_document(request: Request, data: GenerateDocumentRequest):
     if not validation['valid']:
         raise HTTPException(
             status_code=400,
-            detail={
-                "message": "Canvas validation failed. Please fix all issues before generating document.",
-                "validation": validation
-            }
+            detail="Canvas validation failed. Please fix all issues before generating."
         )
 
-    # Generate the document
     buffer = doc_generator.generate(
         data.job_description,
         data.pain_points,
@@ -344,14 +391,13 @@ async def generate_document(request: Request, data: GenerateDocumentRequest):
         data.title
     )
 
-    # Return as downloadable file
+    # Sanitize filename to prevent Content-Disposition header injection
+    safe_filename = sanitize_filename(data.title or "canvas")
+
     return StreamingResponse(
         io.BytesIO(buffer.getvalue()),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
-            "Content-Disposition": f'attachment; filename="{data.title.replace(" ", "_")}.docx"'
+            "Content-Disposition": f'attachment; filename="{safe_filename}.docx"'
         }
     )
-
-
-# ============ Run with: uvicorn app.main:app --reload ============
