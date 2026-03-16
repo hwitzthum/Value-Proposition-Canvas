@@ -2,12 +2,15 @@
 Pydantic request/response schemas for auth, canvas, and admin endpoints.
 """
 
+import html
 import re
 from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from .sanitization import sanitize_input
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +42,11 @@ class RegisterRequest(BaseModel):
     @field_validator("display_name")
     @classmethod
     def sanitize_display_name(cls, v: str) -> str:
-        return v.strip()
+        v = v.strip()
+        # Must contain at least one alphanumeric character
+        if not re.search(r'[a-zA-Z0-9]', v):
+            raise ValueError("Display name must contain at least one alphanumeric character.")
+        return sanitize_input(v)
 
 
 class LoginRequest(BaseModel):
@@ -82,6 +89,48 @@ class CanvasSaveRequest(BaseModel):
     job_validated: Optional[bool] = None
     pains_validated: Optional[bool] = None
     gains_validated: Optional[bool] = None
+
+    @field_validator("title")
+    @classmethod
+    def sanitize_title(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return sanitize_input(v.strip()) if v.strip() else v
+
+    @field_validator("job_description")
+    @classmethod
+    def sanitize_job_description(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return sanitize_input(v.strip()) if v.strip() else v
+
+    @field_validator("pain_points")
+    @classmethod
+    def sanitize_pain_points(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        if len(v) > 50:
+            raise ValueError("Cannot have more than 50 pain points")
+        result = []
+        for item in v:
+            if len(item) > 2000:
+                raise ValueError("Each pain point must be 2000 characters or fewer")
+            result.append(sanitize_input(item.strip()) if item.strip() else item)
+        return result
+
+    @field_validator("gain_points")
+    @classmethod
+    def sanitize_gain_points(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        if len(v) > 50:
+            raise ValueError("Cannot have more than 50 gain points")
+        result = []
+        for item in v:
+            if len(item) > 2000:
+                raise ValueError("Each gain point must be 2000 characters or fewer")
+            result.append(sanitize_input(item.strip()) if item.strip() else item)
+        return result
 
 
 class CanvasResponse(BaseModel):

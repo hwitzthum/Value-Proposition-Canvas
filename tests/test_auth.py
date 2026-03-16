@@ -151,8 +151,9 @@ class TestLogin:
             "email": "pending@example.com",
             "password": "SecureP@ss1!",
         })
-        assert resp.status_code == 403
-        assert "pending" in resp.json()["detail"].lower()
+        # Returns 401 (same as wrong password) to prevent account enumeration
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid email or password."
 
     def test_account_lockout(self, client, active_user):
         """After 5 failed attempts, account should be locked."""
@@ -477,13 +478,13 @@ class TestPausedUserCannotLogin:
         )
         assert resp.status_code == 200
 
-        # User tries to login
+        # User tries to login — returns generic 401 to prevent enumeration
         resp = client.post("/api/auth/login", json={
             "email": user.email,
             "password": password,
         })
-        assert resp.status_code == 403
-        assert "paused" in resp.json()["detail"].lower()
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid email or password."
 
 
 class TestInactivityTimeout:
@@ -512,8 +513,9 @@ class TestInactivityTimeout:
         token = resp.json()["token"]
 
         # Manually set last_activity_at to past inactivity timeout
+        from app.auth import _hash_token
         timeout_minutes = int(os.environ.get("INACTIVITY_TIMEOUT_MINUTES", "30"))
-        session = db.query(UserSession).filter(UserSession.token == token).first()
+        session = db.query(UserSession).filter(UserSession.token == _hash_token(token)).first()
         session.last_activity_at = datetime.now(timezone.utc) - timedelta(minutes=timeout_minutes + 1)
         db.commit()
 
@@ -546,7 +548,8 @@ class TestInactivityHeartbeat:
         token = resp.json()["token"]
 
         # Set last_activity_at to 10 minutes ago
-        session = db.query(UserSession).filter(UserSession.token == token).first()
+        from app.auth import _hash_token
+        session = db.query(UserSession).filter(UserSession.token == _hash_token(token)).first()
         old_time = datetime.now(timezone.utc) - timedelta(minutes=10)
         session.last_activity_at = old_time
         db.commit()
@@ -557,7 +560,7 @@ class TestInactivityHeartbeat:
 
         # last_activity_at should be updated
         db.expire_all()
-        session = db.query(UserSession).filter(UserSession.token == token).first()
+        session = db.query(UserSession).filter(UserSession.token == _hash_token(token)).first()
         last_act = session.last_activity_at
         if last_act.tzinfo is None:
             last_act = last_act.replace(tzinfo=timezone.utc)

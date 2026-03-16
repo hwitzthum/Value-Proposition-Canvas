@@ -48,7 +48,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 async def list_users(
     request: Request,
     status_filter: Optional[str] = Query(None, alias="status", pattern=r"^(pending|active|paused|declined)$"),
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=10000),
     limit: int = Query(50, ge=1, le=200),
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),

@@ -6,8 +6,6 @@ Provides endpoints for validation, coaching suggestions, and document generation
 import io
 import logging
 import os
-import re
-import html
 import secrets
 
 from fastapi import FastAPI, HTTPException, Request, Depends, Security
@@ -23,6 +21,7 @@ from slowapi.errors import RateLimitExceeded
 from .validation import QualityValidator
 from .coaching import CoachingEngine
 from .document_generator import DocumentGenerator
+from .sanitization import sanitize_input, sanitize_filename
 from .security import (
     SecurityHeadersMiddleware,
     RequestSizeLimitMiddleware,
@@ -51,39 +50,6 @@ IS_PRODUCTION = os.getenv("PYTHON_ENV", "development") == "production"
 RATE_LIMIT_AI = os.getenv("RATE_LIMIT_AI", "10/minute")
 RATE_LIMIT_VALIDATION = os.getenv("RATE_LIMIT_VALIDATION", "60/minute")
 RATE_LIMIT_AUTH = os.getenv("RATE_LIMIT_AUTH", "5/minute")
-
-# ============ Security Utilities ============
-DANGEROUS_PATTERNS = [
-    r'<script[^>]*>',
-    r'javascript:',
-    r'on\w+\s*=',
-    r'ignore\s+(all\s+)?(previous|prior)\s+(instructions?|prompts?)',
-    r'system\s*prompt',
-    r'you\s+are\s+now',
-    r'disregard\s+(all\s+)?(previous|prior)',
-]
-
-
-def sanitize_input(text: str) -> str:
-    """Sanitize user input to prevent XSS and prompt injection."""
-    if not text:
-        return text
-    text_lower = text.lower()
-    for pattern in DANGEROUS_PATTERNS:
-        if re.search(pattern, text_lower, re.IGNORECASE):
-            logger.warning("Dangerous input pattern detected and blocked")
-            raise ValueError("Input contains disallowed content.")
-    return html.escape(text)
-
-
-def sanitize_filename(name: str) -> str:
-    """Sanitize a filename to prevent Content-Disposition header injection."""
-    # Remove any characters that are not alphanumeric, space, hyphen, or underscore
-    safe = re.sub(r'[^\w\s\-]', '', name)
-    safe = safe.replace(' ', '_')
-    # Limit length
-    return safe[:100] if safe else "document"
-
 
 # ============ Initialize FastAPI app ============
 app = FastAPI(
