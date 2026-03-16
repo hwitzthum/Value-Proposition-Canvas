@@ -191,6 +191,8 @@ def init_session_state():
 def reset_session_state(preserve_theme: bool = False):
     for key, default in INITIAL_STATE.items():
         st.session_state[key] = list(default) if isinstance(default, list) else default
+    # Bump version to force text_area re-initialization with empty value
+    st.session_state["_job_input_ver"] = st.session_state.get("_job_input_ver", 0) + 1
     if not preserve_theme:
         st.session_state.theme_mode = DEFAULT_THEME
 
@@ -466,6 +468,36 @@ def _render_suggestion_cards(suggestions_list: list, collection_key: str, item_t
                     st.warning("This suggestion is already in your list.")
 
 
+def _render_job_suggestion_cards(suggestions_list: list, prefix: str = "spatial"):
+    """Render clickable job statement suggestion cards with 'Use this' buttons."""
+    if not suggestions_list:
+        return
+    state_key = f"_suggestions_job_{prefix}"
+    for idx, suggestion in enumerate(suggestions_list):
+        text = suggestion.get('text', '')
+        if not text:
+            continue
+
+        col_text, col_btn = st.columns([4, 1])
+        with col_text:
+            st.markdown(
+                f'<div class="suggestion-card">'
+                f'<div class="suggestion-card-text">{html.escape(text)}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        with col_btn:
+            if st.button("Use this", key=f"{prefix}_use_job_suggestion_{idx}", use_container_width=True):
+                current = st.session_state.get("job_description", "").strip()
+                new_text = (current + "\n\n" + text) if current else text
+                st.session_state.job_description = new_text
+                # Bump version to force text_area re-initialization with new value
+                st.session_state["_job_input_ver"] = st.session_state.get("_job_input_ver", 0) + 1
+                st.session_state.pop(state_key, None)
+                st.toast("Job statement updated")
+                st.rerun()
+
+
 def _render_dimension_minimap(dimension_distribution: dict, item_type: str):
     """Render the dimension distribution minimap (functional/emotional/social bar)."""
     func_count = dimension_distribution.get('functional', 0)
@@ -531,10 +563,7 @@ def render_quality_thermometer():
     """Render the multi-dimensional quality indicator in the sidebar."""
     pains = st.session_state.get("pain_points", [])
     gains = st.session_state.get("gain_points", [])
-    # Read from widget key (current value) or session state (saved value)
-    job = (st.session_state.get("spatial_job_input")
-           or st.session_state.get("guided_job_input")
-           or st.session_state.get("job_description", ""))
+    job = st.session_state.get("job_description", "")
 
     pain_count = len(pains)
     gain_count = len(gains)
@@ -623,12 +652,13 @@ def _job_section():
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown("### Job Statement")
 
+    _ver = st.session_state.get("_job_input_ver", 0)
     job = st.text_area(
         "What is the main task or goal you're trying to accomplish?",
         value=st.session_state.job_description,
         height=120,
         placeholder="Example: I need to track my team's monthly expenses and generate financial reports efficiently, so I can make informed budget decisions...",
-        key="spatial_job_input",
+        key=f"spatial_job_input_v{_ver}",
         label_visibility="collapsed",
     )
     st.session_state.job_description = job
@@ -653,17 +683,30 @@ def _job_section():
             st.caption("Validation service unavailable — your work is saved.")
             st.session_state.job_validated = True
 
-    # AI suggestions
+    # AI suggestions — clickable cards
+    _sug_key = "_suggestions_job_spatial"
     if st.button("Get AI suggestions", key="spatial_job_suggest", type="secondary"):
         with st.spinner("Thinking..."):
-            suggestions = call_api("/api/suggestions", "POST", {
-                "step": "job",
-                "job_description": job,
+            suggestions = call_api("/api/suggestions/job-statement", "POST", {
+                "current_description": job,
+                "count": 3,
             })
             if "error" not in suggestions:
-                st.info(suggestions.get("suggestions", "No suggestions available."))
+                suggestions_list = suggestions.get("suggestions_list", [])
+                if suggestions_list:
+                    st.session_state[_sug_key] = suggestions_list
+                    st.rerun()
+                else:
+                    st.info(suggestions.get("suggestions", "No suggestions available."))
             else:
                 st.warning(suggestions["error"])
+
+    # Render suggestion cards outside button callback (Streamlit pattern)
+    if _sug_key in st.session_state:
+        _render_job_suggestion_cards(st.session_state[_sug_key], prefix="spatial")
+        if st.button("Dismiss suggestions", key="dismiss_job_suggestions_spatial"):
+            del st.session_state[_sug_key]
+            st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1068,12 +1111,13 @@ def _guided_job_step():
     if tip:
         _render_coaching_tip(tip)
 
+    _ver = st.session_state.get("_job_input_ver", 0)
     job = st.text_area(
         "Describe the task, goal, or objective:",
         value=st.session_state.job_description,
         height=160,
         placeholder="Example: I need to track my team's monthly expenses and generate financial reports efficiently...",
-        key="guided_job_input",
+        key=f"guided_job_input_v{_ver}",
     )
     st.session_state.job_description = job
 
@@ -1094,15 +1138,29 @@ def _guided_job_step():
         st.caption("Validation service unavailable — your work is saved.")
         st.session_state.job_validated = True
 
+    _sug_key = "_suggestions_job_guided"
     if st.button("Get AI suggestions", key="guided_job_suggest"):
         with st.spinner("Thinking..."):
-            suggestions = call_api("/api/suggestions", "POST", {
-                "step": "job", "job_description": job,
+            suggestions = call_api("/api/suggestions/job-statement", "POST", {
+                "current_description": job,
+                "count": 3,
             })
             if "error" not in suggestions:
-                st.info(suggestions.get("suggestions", "No suggestions."))
+                suggestions_list = suggestions.get("suggestions_list", [])
+                if suggestions_list:
+                    st.session_state[_sug_key] = suggestions_list
+                    st.rerun()
+                else:
+                    st.info(suggestions.get("suggestions", "No suggestions."))
             else:
                 st.warning(suggestions["error"])
+
+    # Render suggestion cards outside button callback (Streamlit pattern)
+    if _sug_key in st.session_state:
+        _render_job_suggestion_cards(st.session_state[_sug_key], prefix="guided")
+        if st.button("Dismiss suggestions", key="dismiss_job_suggestions_guided"):
+            del st.session_state[_sug_key]
+            st.rerun()
 
     st.markdown("---")
     _guided_step_nav(

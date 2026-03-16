@@ -111,7 +111,9 @@ class CoachingEngine:
     
     def get_job_description_suggestions(self, current_description: str) -> dict:
         """
-        Get coaching suggestions for improving the job description.
+        Get prose coaching suggestions for improving the job description.
+        Returns free-text feedback (used by /api/suggestions?step=job).
+        For clickable alternatives, see get_job_statement_suggestions().
         """
         if self.is_ai_enabled:
             system_prompt = """You are a Value Proposition Canvas coach helping someone reflect on their own work processes. 
@@ -157,7 +159,84 @@ class CoachingEngine:
             'suggestions': "\n".join(f"• {s}" for s in suggestions)
         }
     
-    def get_pain_point_suggestions(self, job_description: str, 
+    def get_job_statement_suggestions(self, current_description: str, count: int = 3) -> dict:
+        """
+        Generate concrete, clickable job statement alternatives.
+        When text exists → improve it. When empty → diverse examples.
+        Returns {'source', 'suggestions', 'suggestions_list'}.
+        """
+        if self.is_ai_enabled:
+            if current_description.strip():
+                system_prompt = (
+                    "You are a Value Proposition Canvas coach. "
+                    "Rewrite the user's job statement into better alternatives. "
+                    "Each alternative must be a complete, standalone job statement (20-40 words). "
+                    "Make each version more specific, actionable, and clear. "
+                    "Vary the angle: one focusing on the task, one on the desired outcome, "
+                    "one on the context or trigger."
+                )
+                user_prompt = (
+                    f"Rewrite this job statement into {count} improved alternatives:\n\n"
+                    f'"{current_description}"\n\n'
+                    f"Return ONLY a numbered list (1. 2. 3.) with no extra commentary."
+                )
+            else:
+                system_prompt = (
+                    "You are a Value Proposition Canvas coach. "
+                    "Generate example job statements for a work process reflection. "
+                    "Each must be a complete, standalone statement (20-40 words) "
+                    "from different work domains (e.g. project management, customer support, "
+                    "software development, marketing, operations)."
+                )
+                user_prompt = (
+                    f"Generate {count} diverse example job statements that a professional "
+                    f"might use to describe their core work task or goal.\n\n"
+                    f"Return ONLY a numbered list (1. 2. 3.) with no extra commentary."
+                )
+
+            ai_response = self._call_openai(system_prompt, user_prompt)
+            if ai_response:
+                suggestions_list = self._parse_suggestions(ai_response)
+                return {
+                    'source': 'ai',
+                    'suggestions': ai_response,
+                    'suggestions_list': suggestions_list,
+                }
+
+        # Fallback to rule-based
+        return self._get_rule_based_job_statement_suggestions(current_description, count)
+
+    def _get_rule_based_job_statement_suggestions(self, description: str, count: int = 3) -> dict:
+        """Rule-based fallback for job statement suggestions."""
+        if description.strip():
+            # Enhance existing text with different clause patterns
+            base = description.strip().rstrip('.')
+            templates = [
+                f"{base}, so that I can deliver consistent results and reduce rework",
+                f"{base} by streamlining the steps involved and removing manual bottlenecks",
+                f"When priorities shift, {base.lower()} while keeping quality and deadlines intact",
+            ]
+            selected = templates[:count]
+        else:
+            # Pre-written examples from different domains
+            examples = [
+                "I need to coordinate cross-team deliverables and track dependencies so that projects ship on time without last-minute surprises",
+                "I manage incoming customer issues and route them to the right team so that resolution times stay under our SLA targets",
+                "I review and approve budget requests from department heads so that spending aligns with our quarterly financial plan",
+                "I onboard new hires and ensure they have the tools and knowledge to become productive within their first two weeks",
+                "I maintain our data pipelines and monitor data quality so that downstream analytics and reports remain accurate and timely",
+            ]
+            selected = examples[:count]
+
+        suggestions_list = [{'text': s} for s in selected]
+        return {
+            'source': 'rules',
+            'suggestions': "Try one of these job statements:\n\n" +
+                          "\n".join(f"• {s}" for s in selected),
+            'suggestions_list': suggestions_list,
+        }
+
+    def get_pain_point_suggestions(self, job_description: str,
                                     existing_pains: List[str], 
                                     count_needed: int) -> dict:
         """
