@@ -236,6 +236,15 @@ def _validate_gains_cached(h: str, points: tuple) -> dict:
     return call_api("/api/validate/gain-points", "POST", {"gain_points": list(points)})
 
 
+@st.cache_data(ttl=300)
+def _validate_relevance_cached(h: str, items: tuple, job_desc: str, item_type: str) -> dict:
+    return call_api("/api/validate/relevance", "POST", {
+        "items": list(items),
+        "job_description": job_desc,
+        "item_type": item_type,
+    })
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # UI Helpers
 # ═══════════════════════════════════════════════════════════════════════════
@@ -300,14 +309,93 @@ def _render_empty_state(title: str, description: str):
     )
 
 
-def _build_item_html(index: int, text: str, item_type: str) -> str:
+def _build_item_html(index: int, text: str, item_type: str, similar: bool = False) -> str:
     safe = html.escape(text)
     prefix = "!" if item_type == "pain" else "+"
+    card_class = "item-card item-card-similar" if similar else "item-card"
     return (
-        f'<div class="item-card">'
+        f'<div class="{card_class}">'
         f'<div class="item-badge {item_type}">{prefix}{index + 1}</div>'
         f'<div class="item-text">{safe}</div></div>'
     )
+
+
+def _render_suggestion_cards(suggestions_list: list, collection_key: str, item_type: str):
+    """Render clickable suggestion cards with 'Add this' buttons."""
+    if not suggestions_list:
+        return
+    for idx, suggestion in enumerate(suggestions_list):
+        text = suggestion.get('text', '')
+        if not text:
+            continue
+        category = suggestion.get('category', '')
+
+        # Show the suggestion card with an Add button
+        col_text, col_btn = st.columns([4, 1])
+        with col_text:
+            cat_html = f'<div class="suggestion-card-category">{html.escape(category)}</div>' if category else ''
+            st.markdown(
+                f'<div class="suggestion-card">'
+                f'<div class="suggestion-card-text">{html.escape(text)}{cat_html}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        with col_btn:
+            if st.button("Add this", key=f"add_suggestion_{item_type}_{idx}", use_container_width=True):
+                items = st.session_state.get(collection_key, [])
+                if not _is_duplicate(text, items):
+                    items.append(text)
+                    st.session_state[collection_key] = items
+                    # Clear suggestions after adding
+                    st.session_state.pop(f"_suggestions_{item_type}", None)
+                    st.toast(f"Added suggestion to {item_type}s")
+                    st.rerun()
+                else:
+                    st.warning("This suggestion is already in your list.")
+
+
+def _render_dimension_minimap(dimension_distribution: dict, item_type: str):
+    """Render the dimension distribution minimap (functional/emotional/social bar)."""
+    func_count = dimension_distribution.get('functional', 0)
+    emot_count = dimension_distribution.get('emotional', 0)
+    soc_count = dimension_distribution.get('social', 0)
+    total = func_count + emot_count + soc_count
+
+    if total == 0:
+        return
+
+    func_pct = round(func_count / total * 100)
+    emot_pct = round(emot_count / total * 100)
+    soc_pct = 100 - func_pct - emot_pct  # Ensure it sums to 100
+
+    st.markdown(f'''
+    <div class="dimension-minimap">
+        <div class="dimension-minimap-title">Dimension Coverage</div>
+        <div class="dimension-bar-container">
+            <div class="dimension-bar-segment functional" style="width:{func_pct}%"></div>
+            <div class="dimension-bar-segment emotional" style="width:{emot_pct}%"></div>
+            <div class="dimension-bar-segment social" style="width:{soc_pct}%"></div>
+        </div>
+        <div class="dimension-legend">
+            <div class="dimension-legend-item"><div class="dimension-dot functional"></div>Functional ({func_count})</div>
+            <div class="dimension-legend-item"><div class="dimension-dot emotional"></div>Emotional ({emot_count})</div>
+            <div class="dimension-legend-item"><div class="dimension-dot social"></div>Social ({soc_count})</div>
+        </div>
+    </div>
+    ''', unsafe_allow_html=True)
+
+
+def _render_improve_comparison(original: str, improved: str, explanation: str):
+    """Render a before/after comparison for an improved item."""
+    st.markdown(f'''
+    <div class="improve-comparison">
+        <div class="improve-comparison-label before">Original</div>
+        <div class="improve-comparison-text before">{html.escape(original)}</div>
+        <div class="improve-comparison-label after">Improved</div>
+        <div class="improve-comparison-text after">{html.escape(improved)}</div>
+        <div class="improve-explanation">{html.escape(explanation)}</div>
+    </div>
+    ''', unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -472,6 +560,9 @@ def _items_column(collection_key: str, item_type: str, item_label: str,
     items = st.session_state.get(collection_key, [])
     icon = "!" if item_type == "pain" else "+"
 
+    # Track which items are flagged as similar (for highlighting)
+    similar_indices = set()
+
     # Column header
     st.markdown(
         f'<div class="col-header {item_type}">'
@@ -512,23 +603,58 @@ def _items_column(collection_key: str, item_type: str, item_label: str,
                     st.session_state[editing_key] = None
                     st.rerun()
             else:
-                st.markdown(_build_item_html(i, text, item_type), unsafe_allow_html=True)
-                c1, c2 = st.columns([1, 1])
+                is_similar = i in similar_indices
+                st.markdown(_build_item_html(i, text, item_type, similar=is_similar), unsafe_allow_html=True)
+                c1, c2, c3 = st.columns([1, 1, 1])
                 with c1:
                     if st.button("Edit", key=f"edit_{item_type}_btn_{i}", use_container_width=True):
                         st.session_state[editing_key] = i
                         st.rerun()
                 with c2:
+                    if st.button("Improve", key=f"improve_{item_type}_btn_{i}", use_container_width=True):
+                        with st.spinner("Improving..."):
+                            result = call_api("/api/improve-item", "POST", {
+                                "item": text,
+                                "item_type": item_type.replace(" ", "_"),
+                                "job_description": st.session_state.get("job_description", ""),
+                                "context_items": [t for j, t in enumerate(items) if j != i][:5],
+                            })
+                            if "error" not in result:
+                                st.session_state[f"_improve_result_{item_type}_{i}"] = result
+                            else:
+                                st.warning(result["error"])
+                with c3:
                     if st.button("Delete", key=f"del_{item_type}_btn_{i}", use_container_width=True):
                         st.session_state[collection_key].pop(i)
                         if st.session_state.get(editing_key) == i:
                             st.session_state[editing_key] = None
                         st.toast(f"{item_label.title()} removed")
                         st.rerun()
+
+                # Show improve comparison if available
+                improve_key = f"_improve_result_{item_type}_{i}"
+                if st.session_state.get(improve_key):
+                    imp = st.session_state[improve_key]
+                    _render_improve_comparison(
+                        imp.get('original', text),
+                        imp.get('improved', text),
+                        imp.get('explanation', ''),
+                    )
+                    acc_col, rej_col = st.columns(2)
+                    with acc_col:
+                        if st.button("Accept", key=f"accept_improve_{item_type}_{i}", type="primary", use_container_width=True):
+                            st.session_state[collection_key][i] = imp['improved']
+                            del st.session_state[improve_key]
+                            st.toast("Improvement accepted")
+                            st.rerun()
+                    with rej_col:
+                        if st.button("Reject", key=f"reject_improve_{item_type}_{i}", use_container_width=True):
+                            del st.session_state[improve_key]
+                            st.rerun()
     else:
         _render_empty_state(
             f"No {item_label}s yet",
-            f"Add {item_label}s below — one per line for batch, or one at a time.",
+            f"Start with your most obvious {'frustration' if item_type == 'pain' else 'desired outcome'} — the one you'd mention first.",
         )
 
     # Brainstorm input — clear if flagged from previous add
@@ -566,6 +692,7 @@ def _items_column(collection_key: str, item_type: str, item_label: str,
 
     with c2:
         remaining = max(0, ideal_min - len(items))
+        suggestions_state_key = f"_suggestions_{item_type}"
         if remaining > 0:
             if st.button(f"Suggest {remaining} more", key=f"suggest_{item_type}_btn",
                           use_container_width=True):
@@ -577,34 +704,150 @@ def _items_column(collection_key: str, item_type: str, item_label: str,
                         "count_needed": remaining,
                     })
                     if "error" not in suggestions:
-                        st.info(suggestions.get("suggestions", "No suggestions."))
+                        suggestions_list = suggestions.get("suggestions_list", [])
+                        if suggestions_list:
+                            st.session_state[suggestions_state_key] = suggestions_list
+                            st.rerun()
+                        else:
+                            st.info(suggestions.get("suggestions", "No suggestions."))
                     else:
                         st.warning(suggestions["error"])
 
-    # Validation (when 2+ items)
+    # Render suggestion cards outside button callback so "Add this" works
+    suggestions_state_key = f"_suggestions_{item_type}"
+    if suggestions_state_key in st.session_state:
+        _render_suggestion_cards(
+            st.session_state[suggestions_state_key], collection_key, item_type
+        )
+        if st.button("Dismiss suggestions", key=f"dismiss_suggestions_{item_type}"):
+            del st.session_state[suggestions_state_key]
+            st.rerun()
+
+    # Validation (when 2+ items) — progressive disclosure
     if len(items) >= 2:
         points_tuple = tuple(items)
         result = validate_fn(_content_hash(str(points_tuple)), points_tuple)
         if result and "error" not in result:
             st.session_state[validated_key] = result.get("valid", False)
-            for fb in result.get("overall_feedback", []):
-                _render_validation_msg("warning", fb)
-            independence = result.get("independence_check", {})
-            if independence and not independence.get("independent", True):
-                for issue in independence.get("issues", []):
-                    _render_validation_msg("error", issue.get("message", ""))
+            priority = result.get("priority_level", "count")
+
+            # Positive feedback first
+            for pfb in result.get("positive_feedback", []):
+                st.markdown(
+                    f'<div class="positive-feedback"><span>✓</span> {html.escape(pfb)}</div>',
+                    unsafe_allow_html=True,
+                )
+
+            # Progressive disclosure: only show the most relevant tier
+            if priority == "count":
+                for fb in result.get("overall_feedback", []):
+                    _render_validation_msg("warning", fb)
+            elif priority == "quality":
+                # Show quality issues for individual items
+                for q in result.get("individual_quality", []):
+                    if not q.get("valid", True):
+                        idx = q.get("index", "?")
+                        for fb in q.get("feedback", []):
+                            _render_validation_msg("warning", f"Item {idx + 1}: {fb}")
+            elif priority == "independence":
+                independence = result.get("independence_check", {})
+                if independence and not independence.get("independent", True):
+                    for issue in independence.get("issues", []):
+                        sim = issue.get("similarity", 0)
+                        i1 = issue.get("item1_index", 0)
+                        i2 = issue.get("item2_index", 0)
+                        similar_indices.add(i1)
+                        similar_indices.add(i2)
+                        # Coaching-style message
+                        _render_validation_msg(
+                            "warning",
+                            f"Items {i1 + 1} and {i2 + 1} are {sim}% similar — "
+                            f"could you combine them into one stronger point, or sharpen the difference?"
+                        )
+                        # Merge button
+                        if st.button(
+                            f"Merge items {i1 + 1} & {i2 + 1}",
+                            key=f"merge_{item_type}_{i1}_{i2}",
+                        ):
+                            with st.spinner("Merging..."):
+                                merge_result = call_api("/api/merge-items", "POST", {
+                                    "item1": items[i1],
+                                    "item2": items[i2],
+                                    "item_type": item_type,
+                                    "job_description": st.session_state.get("job_description", ""),
+                                })
+                                if "error" not in merge_result:
+                                    st.session_state[f"_merge_result_{item_type}_{i1}_{i2}"] = merge_result
+                                else:
+                                    st.warning(merge_result["error"])
+
+                        # Show merge result if available
+                        merge_key = f"_merge_result_{item_type}_{i1}_{i2}"
+                        if st.session_state.get(merge_key):
+                            mr = st.session_state[merge_key]
+                            st.markdown(
+                                f'<div class="merge-prompt">'
+                                f'<div class="merge-prompt-text">'
+                                f'Suggested merge: <strong>{html.escape(mr.get("merged", ""))}</strong><br>'
+                                f'<em>{html.escape(mr.get("explanation", ""))}</em>'
+                                f'</div></div>',
+                                unsafe_allow_html=True,
+                            )
+                            mc1, mc2 = st.columns(2)
+                            with mc1:
+                                if st.button("Accept merge", key=f"accept_merge_{item_type}_{i1}_{i2}", type="primary", use_container_width=True):
+                                    # Replace item at i1 with merged, remove item at i2
+                                    st.session_state[collection_key][i1] = mr["merged"]
+                                    st.session_state[collection_key].pop(i2)
+                                    del st.session_state[merge_key]
+                                    st.toast("Items merged")
+                                    st.rerun()
+                            with mc2:
+                                if st.button("Dismiss", key=f"dismiss_merge_{item_type}_{i1}_{i2}", use_container_width=True):
+                                    del st.session_state[merge_key]
+                                    st.rerun()
+            # 'complete' priority → no warnings needed, positive feedback handles it
+
         elif result and "error" in result:
-            # Validation service unavailable — don't block the user
             st.session_state[validated_key] = True
     else:
         st.session_state[validated_key] = False
 
-    # Coaching nudge
-    nudge_thresholds = {3: "Strong canvases typically have 6-8 items.", 0: ""}
-    for threshold, msg in sorted(nudge_thresholds.items(), reverse=True):
-        if len(items) == threshold and msg:
-            _render_coaching_tip(f"{msg} You have {len(items)} — keep going?")
-            break
+    # Relevance check (when job is validated and 2+ items)
+    job_desc = st.session_state.get("job_description", "")
+    if st.session_state.get("job_validated", False) and len(items) >= 2 and job_desc.strip():
+        points_tuple = tuple(items)
+        relevance = _validate_relevance_cached(
+            _content_hash(f"rel_{str(points_tuple)}_{job_desc}"),
+            points_tuple, job_desc, item_type,
+        )
+        if relevance and "error" not in relevance:
+            # Show relevance warnings
+            for score_entry in relevance.get("item_scores", []):
+                if not score_entry.get("relevant", True):
+                    fb = score_entry.get("feedback", "This item may not be relevant to your job.")
+                    idx = score_entry.get("index", "?")
+                    st.markdown(
+                        f'<div class="relevance-warning">Item {idx + 1}: {html.escape(fb)}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            # Dimension minimap
+            dim_dist = relevance.get("dimension_distribution", {})
+            if sum(dim_dist.values()) > 0:
+                _render_dimension_minimap(dim_dist, item_type)
+
+    # Coaching nudge — multiple thresholds
+    if len(items) == 0:
+        pass  # Empty state handles this
+    elif len(items) == 1:
+        _render_coaching_tip(f"Good start! Add more {item_label}s to build a complete picture.")
+    elif len(items) == 3:
+        _render_coaching_tip(f"You have {len(items)} {item_label}s — strong canvases typically have {ideal_min}+. Keep going!")
+    elif len(items) == 5:
+        _render_coaching_tip(f"Almost there — {ideal_min - len(items)} more for a solid canvas.")
+    elif len(items) >= ideal_min:
+        _render_coaching_tip(f"Great coverage with {len(items)} {item_label}s! Review for any overlaps.")
 
 
 def render_spatial_canvas():

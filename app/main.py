@@ -265,6 +265,65 @@ class CanvasValidationRequest(BaseModel):
         return [sanitize_input(p.strip()) for p in v if p.strip()]
 
 
+class ImproveItemRequest(BaseModel):
+    item: str = Field(..., min_length=1, max_length=2000)
+    item_type: str = Field(..., pattern=r'^(pain|gain)$')
+    job_description: Optional[str] = Field(default="", max_length=5000)
+    context_items: Optional[List[str]] = Field(default_factory=list, max_length=20)
+
+    @field_validator('item')
+    @classmethod
+    def sanitize_item(cls, v: str) -> str:
+        return sanitize_input(v.strip())
+
+    @field_validator('job_description')
+    @classmethod
+    def sanitize_job_desc(cls, v: Optional[str]) -> str:
+        return sanitize_input(v.strip()) if v else ""
+
+    @field_validator('context_items')
+    @classmethod
+    def sanitize_context(cls, v: Optional[List[str]]) -> List[str]:
+        if not v:
+            return []
+        return [sanitize_input(item.strip()) for item in v if item.strip()]
+
+
+class MergeItemsRequest(BaseModel):
+    item1: str = Field(..., min_length=1, max_length=2000)
+    item2: str = Field(..., min_length=1, max_length=2000)
+    item_type: str = Field(..., pattern=r'^(pain|gain)$')
+    job_description: Optional[str] = Field(default="", max_length=5000)
+
+    @field_validator('item1', 'item2')
+    @classmethod
+    def sanitize_items(cls, v: str) -> str:
+        return sanitize_input(v.strip())
+
+    @field_validator('job_description')
+    @classmethod
+    def sanitize_job_desc(cls, v: Optional[str]) -> str:
+        return sanitize_input(v.strip()) if v else ""
+
+
+class RelevanceCheckRequest(BaseModel):
+    items: List[str] = Field(..., min_length=1, max_length=50)
+    job_description: str = Field(..., min_length=1, max_length=5000)
+    item_type: str = Field(..., pattern=r'^(pain|gain)$')
+
+    @field_validator('items')
+    @classmethod
+    def sanitize_items(cls, v: List[str]) -> List[str]:
+        if len(v) > 50:
+            raise ValueError("Cannot have more than 50 items")
+        return [sanitize_input(item.strip()) for item in v if item.strip()]
+
+    @field_validator('job_description')
+    @classmethod
+    def sanitize_job_desc(cls, v: str) -> str:
+        return sanitize_input(v.strip())
+
+
 # ============ API Endpoints ============
 
 @app.get("/")
@@ -299,14 +358,20 @@ async def validate_job_description(request: Request, data: JobDescriptionRequest
 @limiter.limit(RATE_LIMIT_VALIDATION)
 async def validate_pain_points(request: Request, data: PainPointsRequest):
     """Validate pain points for quality and independence."""
-    return validator.validate_pain_points(data.pain_points)
+    result = validator.validate_pain_points(data.pain_points)
+    result['priority_level'] = validator.compute_priority_level(result)
+    result['positive_feedback'] = validator.compute_positive_feedback(result, "pain point")
+    return result
 
 
 @app.post("/api/validate/gain-points", dependencies=[Depends(verify_api_key)])
 @limiter.limit(RATE_LIMIT_VALIDATION)
 async def validate_gain_points(request: Request, data: GainPointsRequest):
     """Validate gain points for quality and independence."""
-    return validator.validate_gain_points(data.gain_points)
+    result = validator.validate_gain_points(data.gain_points)
+    result['priority_level'] = validator.compute_priority_level(result)
+    result['positive_feedback'] = validator.compute_positive_feedback(result, "gain point")
+    return result
 
 
 @app.post("/api/validate/canvas", dependencies=[Depends(verify_api_key)])
@@ -350,6 +415,40 @@ async def get_coaching_tip(request: Request, step: str):
         raise HTTPException(status_code=400, detail="Invalid step.")
     tip = coach.get_coaching_tip(step)
     return {"step": step, "tip": tip}
+
+
+@app.post("/api/improve-item", dependencies=[Depends(verify_api_key)])
+@limiter.limit(RATE_LIMIT_AI)
+async def improve_item(request: Request, data: ImproveItemRequest):
+    """Improve a single pain/gain point using AI coaching."""
+    return coach.improve_item(
+        item=data.item,
+        item_type=data.item_type,
+        job_description=data.job_description or "",
+        context_items=data.context_items or [],
+    )
+
+
+@app.post("/api/merge-items", dependencies=[Depends(verify_api_key)])
+@limiter.limit(RATE_LIMIT_AI)
+async def merge_items(request: Request, data: MergeItemsRequest):
+    """Merge two similar items into one stronger item."""
+    return coach.merge_items(
+        item1=data.item1,
+        item2=data.item2,
+        item_type=data.item_type,
+        job_description=data.job_description or "",
+    )
+
+
+@app.post("/api/validate/relevance", dependencies=[Depends(verify_api_key)])
+@limiter.limit(RATE_LIMIT_VALIDATION)
+async def check_relevance(request: Request, data: RelevanceCheckRequest):
+    """Check if items are relevant to the job description."""
+    return validator.check_relevance(
+        items=data.items,
+        job_description=data.job_description,
+    )
 
 
 @app.post("/api/generate-document", dependencies=[Depends(verify_api_key)])
