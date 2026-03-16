@@ -183,9 +183,13 @@ header[data-testid="stHeader"] {
     background: transparent !important;
     border-bottom: none !important;
 }
-/* Hide the deploy/app menu button but keep sidebar collapse button */
-header[data-testid="stHeader"] [data-testid="stToolbar"] { display: none; }
+/* Hide deploy button and decoration, but keep sidebar expand button visible */
 header[data-testid="stHeader"] [data-testid="stDecoration"] { display: none; }
+header[data-testid="stHeader"] [data-testid="stAppDeployButton"] { display: none; }
+header[data-testid="stHeader"] [data-testid="stMainMenu"] { display: none; }
+/* Force sidebar collapse/expand buttons visible (Streamlit hides them by default) */
+[data-testid="stSidebarCollapseButton"] { visibility: visible !important; }
+[data-testid="stExpandSidebarButton"] { display: flex !important; }
 
 .main .block-container {
     padding-top: var(--space-6);
