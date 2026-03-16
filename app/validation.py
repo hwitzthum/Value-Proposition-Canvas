@@ -16,7 +16,7 @@ class QualityValidator:
     MIN_CHAR_LENGTH = 20
 
     # Maximum similarity threshold (items above this are considered too similar)
-    SIMILARITY_THRESHOLD = 0.7
+    SIMILARITY_THRESHOLD = 0.8
 
     # Minimum requirements
     MIN_PAIN_POINTS = 7
@@ -29,6 +29,38 @@ class QualityValidator:
     JOB_WEIGHT = 0.30
     PAIN_WEIGHT = 0.35
     GAIN_WEIGHT = 0.35
+
+    # Synonym clusters for hybrid relevance scoring (substring matching)
+    SYNONYM_CLUSTERS = [
+        {'process', 'workflow', 'pipeline', 'procedure', 'system', 'method', 'approach'},
+        {'monitor', 'track', 'dashboard', 'alert', 'observ', 'metric', 'measure', 'report'},
+        {'time', 'speed', 'fast', 'slow', 'quick', 'delay', 'wait', 'long', 'duration', 'hour'},
+        {'improve', 'enhance', 'better', 'optim', 'upgrad', 'refin', 'boost'},
+        {'automat', 'manual', 'script', 'tool', 'efficien'},
+        {'deploy', 'release', 'build', 'ship', 'rollout', 'ci/cd', 'infrastructur', 'server', 'environment'},
+        {'quality', 'reliable', 'bug', 'error', 'fail', 'stable', 'robust', 'recover', 'heal', 'resilien'},
+        {'team', 'collaborat', 'communicat', 'stakeholder', 'colleague'},
+        {'cost', 'budget', 'expens', 'resource', 'invest'},
+        {'risk', 'secur', 'vulnerab', 'threat', 'protect', 'safe'},
+        {'customer', 'user', 'client', 'experience', 'satisf'},
+        {'document', 'runbook', 'guide', 'instruct', 'onboard'},
+        {'plan', 'schedule', 'deadline', 'milestone', 'priorit', 'goal'},
+        {'data', 'analyt', 'insight', 'statist', 'number'},
+        {'learn', 'train', 'skill', 'knowledge', 'expert', 'competenc'},
+    ]
+
+    # Stopwords for Jaccard stem scoring
+    STOPWORDS = frozenset({
+        'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+        'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+        'should', 'may', 'might', 'can', 'shall', 'to', 'of', 'in', 'for',
+        'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during',
+        'before', 'after', 'above', 'below', 'between', 'and', 'but', 'or',
+        'not', 'no', 'nor', 'so', 'yet', 'both', 'each', 'few', 'more',
+        'most', 'other', 'some', 'such', 'than', 'too', 'very', 'just',
+        'about', 'up', 'out', 'if', 'then', 'that', 'this', 'it', 'its',
+        'my', 'our', 'your', 'their', 'i', 'we', 'you', 'they', 'he', 'she',
+    })
 
     def __init__(self):
         pass
@@ -235,3 +267,189 @@ class QualityValidator:
             'gain_points': gain_result,
             'ready_for_export': overall_valid
         }
+
+    def compute_priority_level(self, result: dict) -> str:
+        """Determine the highest-priority feedback tier for progressive disclosure.
+
+        Returns one of: 'count', 'quality', 'independence', 'complete'
+        - 'count': not enough items yet (show count feedback only)
+        - 'quality': enough items but quality issues exist
+        - 'independence': quality OK but items are too similar
+        - 'complete': everything passes
+        """
+        if not result.get('enough_points', True):
+            return 'count'
+
+        quality_issues = any(
+            not q.get('valid', True)
+            for q in result.get('individual_quality', [])
+        )
+        if quality_issues:
+            return 'quality'
+
+        independence = result.get('independence_check')
+        if independence and not independence.get('independent', True):
+            return 'independence'
+
+        return 'complete'
+
+    def compute_positive_feedback(self, result: dict, item_label: str) -> List[str]:
+        """Generate positive feedback messages for items that pass validation."""
+        feedback = []
+        count = result.get('count', 0)
+        min_required = result.get('min_required', 0)
+
+        if count >= min_required:
+            feedback.append(f"Great — you have {count} {item_label}s, meeting the minimum of {min_required}.")
+
+        quality_scores = [q.get('score', 0) for q in result.get('individual_quality', [])]
+        if quality_scores:
+            avg_score = sum(quality_scores) / len(quality_scores)
+            if avg_score >= 75:
+                feedback.append(f"Good specificity across your {item_label}s.")
+
+        independence = result.get('independence_check')
+        if independence and independence.get('independent', True) and count >= 2:
+            feedback.append(f"All {item_label}s are distinct from each other.")
+
+        return feedback
+
+    def classify_dimension(self, item: str) -> str:
+        """Classify an item into functional/emotional/social dimension using keywords."""
+        item_lower = item.lower()
+
+        emotional_keywords = [
+            'frustrat', 'stress', 'anxious', 'anxiety', 'worry', 'fear', 'annoy',
+            'overwhelm', 'confus', 'embarrass', 'disappoint', 'satisf', 'happy',
+            'enjoy', 'excit', 'confident', 'proud', 'relief', 'comfort', 'feel',
+            'emotion', 'motivation', 'morale', 'burnout', 'exhaust',
+        ]
+        social_keywords = [
+            'team', 'collaborat', 'communicat', 'reputation', 'trust', 'recogni',
+            'respect', 'relationship', 'stakeholder', 'colleague', 'manager',
+            'client', 'customer', 'peer', 'network', 'community', 'status',
+            'credibility', 'influence', 'feedback from', 'approval',
+        ]
+
+        emotional_score = sum(1 for kw in emotional_keywords if kw in item_lower)
+        social_score = sum(1 for kw in social_keywords if kw in item_lower)
+
+        if emotional_score > social_score and emotional_score > 0:
+            return 'emotional'
+        elif social_score > emotional_score and social_score > 0:
+            return 'social'
+        elif emotional_score > 0 and social_score > 0:
+            return 'emotional'  # tie-break to emotional
+        else:
+            return 'functional'  # default: if no emotional/social keywords, it's functional
+
+    def _keyword_overlap_score(self, text1: str, text2: str) -> float:
+        """Expand both texts using SYNONYM_CLUSTERS, then compute Jaccard similarity."""
+        t1_lower = text1.lower()
+        t2_lower = text2.lower()
+
+        # Collect base words (non-stopword)
+        set1 = {w.strip('.,;:!?') for w in t1_lower.split()} - self.STOPWORDS
+        set2 = {w.strip('.,;:!?') for w in t2_lower.split()} - self.STOPWORDS
+
+        # Expand via synonym clusters (substring match)
+        expanded1 = set(set1)
+        expanded2 = set(set2)
+        for cluster in self.SYNONYM_CLUSTERS:
+            t1_hit = any(term in t1_lower for term in cluster)
+            t2_hit = any(term in t2_lower for term in cluster)
+            if t1_hit:
+                expanded1.update(cluster)
+            if t2_hit:
+                expanded2.update(cluster)
+
+        if not expanded1 or not expanded2:
+            return 0.0
+        intersection = expanded1 & expanded2
+        union = expanded1 | expanded2
+        return len(intersection) / len(union) if union else 0.0
+
+    def _jaccard_stem_score(self, text1: str, text2: str, stem_len: int = 6) -> float:
+        """Crude stemming (truncate to stem_len), then Jaccard on stem sets."""
+        def stems(text: str) -> set:
+            words = {w.strip('.,;:!?') for w in text.lower().split()} - self.STOPWORDS
+            return {w[:stem_len] for w in words if len(w) > 2}
+
+        s1 = stems(text1)
+        s2 = stems(text2)
+        if not s1 or not s2:
+            return 0.0
+        intersection = s1 & s2
+        union = s1 | s2
+        return len(intersection) / len(union) if union else 0.0
+
+    def check_relevance(self, items: List[str], job_description: str) -> dict:
+        """Check if items are relevant to the job description using hybrid scoring.
+
+        Combines TF-IDF cosine similarity, synonym-expanded keyword overlap,
+        and Jaccard stem similarity for robust relevance detection.
+        """
+        if not items or not job_description.strip():
+            return {
+                'relevant': True,
+                'item_scores': [],
+                'dimension_distribution': {'functional': 0, 'emotional': 0, 'social': 0},
+            }
+
+        RELEVANCE_THRESHOLD = 0.05
+
+        try:
+            vectorizer = TfidfVectorizer(
+                stop_words='english', ngram_range=(1, 2), min_df=1
+            )
+            all_texts = [job_description] + list(items)
+            tfidf_matrix = vectorizer.fit_transform(all_texts)
+
+            job_vector = tfidf_matrix[0:1]
+            item_vectors = tfidf_matrix[1:]
+            similarities = cosine_similarity(item_vectors, job_vector).flatten()
+        except Exception:
+            similarities = np.zeros(len(items))
+
+        item_scores = []
+        all_relevant = True
+        for i, item in enumerate(items):
+            tfidf_score = float(similarities[i])
+            kw_score = self._keyword_overlap_score(job_description, item)
+            jac_score = self._jaccard_stem_score(job_description, item)
+            combined = 0.4 * kw_score + 0.3 * jac_score + 0.3 * tfidf_score
+            final_score = max(tfidf_score, combined)  # any strong signal passes
+
+            score_pct = round(final_score * 100, 1)
+            is_relevant = bool(final_score >= RELEVANCE_THRESHOLD)
+            dimension = self.classify_dimension(item)
+
+            entry = {
+                'index': i,
+                'item': item[:80] + '...' if len(item) > 80 else item,
+                'relevance_score': score_pct,
+                'relevant': is_relevant,
+                'dimension': dimension,
+            }
+            if not is_relevant:
+                entry['feedback'] = (
+                    "This item may not be related to your job description. "
+                    "Consider revising it to connect more clearly to your stated goal."
+                )
+                all_relevant = False
+
+            item_scores.append(entry)
+
+        return {
+            'relevant': all_relevant,
+            'item_scores': item_scores,
+            'dimension_distribution': self._count_dimensions(items),
+        }
+
+    def _count_dimensions(self, items: List[str]) -> dict:
+        """Count items per dimension."""
+        dist = {'functional': 0, 'emotional': 0, 'social': 0}
+        for item in items:
+            dim = self.classify_dimension(item)
+            dist[dim] = dist.get(dim, 0) + 1
+        return dist

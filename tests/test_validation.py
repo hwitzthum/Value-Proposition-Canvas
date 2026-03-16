@@ -122,3 +122,191 @@ class TestCompleteCanvas:
     def test_invalid_canvas_no_job(self, validator):
         result = validator.validate_complete_canvas("x", [], [])
         assert result["valid"] is False
+
+
+class TestPriorityLevel:
+    """Tests for compute_priority_level() progressive disclosure."""
+
+    def test_count_priority_when_not_enough_points(self, validator):
+        result = validator.validate_pain_points(["One item here with enough detail"])
+        priority = validator.compute_priority_level(result)
+        assert priority == "count"
+
+    def test_quality_priority_when_items_have_issues(self, validator):
+        # Enough items (7) but some have quality issues (too short)
+        items = [
+            "Detailed pain point about manual data entry processes",
+            "Complex workflow issues with deployment pipeline",
+            "bad",  # too short, quality issue
+            "Communication problems between team members daily",
+            "Testing takes too long before each release cycle",
+            "Documentation becomes outdated very quickly now",
+            "Third party API failures cause downstream issues",
+        ]
+        result = validator.validate_pain_points(items)
+        priority = validator.compute_priority_level(result)
+        assert priority == "quality"
+
+    def test_independence_priority_when_similar_items(self, validator):
+        items = [
+            "Spending too much time on manual data entry into spreadsheets each week",
+            "Spending too much time on manual data entry into spreadsheets every week",
+            "Frequent miscommunication between design and engineering teams",
+            "No automated testing leads to bugs in production releases",
+            "Environment configuration differs between staging and production",
+            "Documentation becomes stale quickly and misleads developers",
+            "On-call rotations are exhausting due to frequent alerts",
+        ]
+        result = validator.validate_pain_points(items)
+        priority = validator.compute_priority_level(result)
+        assert priority == "independence"
+
+    def test_complete_priority_when_all_good(self, validator):
+        items = [
+            "Manual testing takes several hours before each release",
+            "Frequent merge conflicts slow down the development team",
+            "No automated rollback mechanism for production bugs",
+            "Environment configuration differs between staging and prod",
+            "Documentation becomes stale quickly and misleads devs",
+            "On-call rotations exhausting due to frequent night alerts",
+            "Third-party API rate limits cause cascading failures",
+        ]
+        result = validator.validate_pain_points(items)
+        priority = validator.compute_priority_level(result)
+        assert priority == "complete"
+
+
+class TestPositiveFeedback:
+    """Tests for compute_positive_feedback()."""
+
+    def test_positive_feedback_when_enough_items(self, validator):
+        items = [
+            "Manual testing takes several hours before each release",
+            "Frequent merge conflicts slow down the development team",
+            "No automated rollback mechanism for production bugs",
+            "Environment configuration differs between staging and prod",
+            "Documentation becomes stale quickly and misleads devs",
+            "On-call rotations exhausting due to frequent night alerts",
+            "Third-party API rate limits cause cascading failures",
+        ]
+        result = validator.validate_pain_points(items)
+        feedback = validator.compute_positive_feedback(result, "pain point")
+        assert any("meeting the minimum" in f for f in feedback)
+
+    def test_no_positive_feedback_when_insufficient(self, validator):
+        items = ["One item only with enough detail here"]
+        result = validator.validate_pain_points(items)
+        feedback = validator.compute_positive_feedback(result, "pain point")
+        assert not any("meeting the minimum" in f for f in feedback)
+
+
+class TestClassifyDimension:
+    """Tests for classify_dimension()."""
+
+    def test_functional_default(self, validator):
+        assert validator.classify_dimension("Spending too much time on manual data entry") == "functional"
+
+    def test_emotional_classification(self, validator):
+        assert validator.classify_dimension("Feeling stressed and frustrated by tight deadlines") == "emotional"
+
+    def test_social_classification(self, validator):
+        assert validator.classify_dimension("Poor collaboration and communication between team members") == "social"
+
+
+class TestRelevance:
+    """Tests for check_relevance()."""
+
+    def test_relevant_items(self, validator):
+        job = "I want to improve our software deployment process because it takes too long"
+        items = [
+            "Manual testing takes hours before each release",
+            "Deployment scripts are fragile and often fail",
+        ]
+        result = validator.check_relevance(items, job)
+        assert result["relevant"] is True
+        assert len(result["item_scores"]) == 2
+        assert all(s["relevant"] for s in result["item_scores"])
+
+    def test_irrelevant_item_detected(self, validator):
+        job = "I want to improve our software deployment process because it takes too long"
+        items = [
+            "Manual testing takes hours before each release",
+            "My favorite recipe is chocolate cake with vanilla frosting",
+        ]
+        result = validator.check_relevance(items, job)
+        # The cake item should be flagged as irrelevant
+        cake_score = result["item_scores"][1]
+        assert cake_score["relevant"] is False
+        assert "feedback" in cake_score
+
+    def test_dimension_distribution(self, validator):
+        job = "I want to improve team productivity"
+        items = [
+            "Manual processes waste time every day",
+            "Feeling stressed by constant interruptions",
+            "Poor communication between team members",
+        ]
+        result = validator.check_relevance(items, job)
+        dist = result["dimension_distribution"]
+        assert dist["functional"] >= 1
+        assert dist["emotional"] >= 1
+        assert dist["social"] >= 1
+
+    def test_empty_items(self, validator):
+        result = validator.check_relevance([], "some job")
+        assert result["relevant"] is True
+        assert result["item_scores"] == []
+
+    def test_empty_job_description(self, validator):
+        result = validator.check_relevance(["some item"], "")
+        assert result["relevant"] is True
+
+
+class TestHybridRelevance:
+    """Tests for hybrid relevance scoring (synonym clusters + Jaccard + TF-IDF)."""
+
+    def test_semantically_related_items_pass(self, validator):
+        """Items using different vocabulary but related to the job should pass."""
+        job = "I want to improve our software deployment process because it takes too long"
+        items = [
+            "Real-time monitoring dashboards with actionable alerting thresholds",
+            "Self-healing infrastructure that recovers from common failure modes",
+            "Clear runbooks reducing incident response time significantly overall",
+        ]
+        result = validator.check_relevance(items, job)
+        for s in result["item_scores"]:
+            assert s["relevant"] is True, f"'{s['item']}' scored {s['relevance_score']}% — expected relevant"
+
+    def test_hybrid_threshold_separates_relevant_from_irrelevant(self, validator):
+        """CI/CD items pass, chocolate cake fails."""
+        job = "I want to improve our software deployment process because it takes too long"
+        items = [
+            "Automated CI/CD pipeline cutting deployment time by seventy percent",
+            "My favorite recipe is chocolate cake with vanilla frosting",
+        ]
+        result = validator.check_relevance(items, job)
+        assert result["item_scores"][0]["relevant"] is True
+        assert result["item_scores"][1]["relevant"] is False
+
+    def test_keyword_overlap_score(self, validator):
+        """Synonym cluster expansion should create non-zero overlap."""
+        score = validator._keyword_overlap_score(
+            "deployment process",
+            "infrastructure environment"
+        )
+        assert score > 0, "deploy and infrastructure share a synonym cluster"
+
+    def test_jaccard_stem_score(self, validator):
+        """Truncated stems should find overlap between related words."""
+        score = validator._jaccard_stem_score(
+            "deployment automated",
+            "deploying automation"
+        )
+        assert score > 0, "deploy* and automa* stems should overlap"
+
+
+class TestSimilarityThreshold:
+    """Test that the threshold was raised to 0.8."""
+
+    def test_threshold_is_08(self, validator):
+        assert validator.SIMILARITY_THRESHOLD == 0.8
