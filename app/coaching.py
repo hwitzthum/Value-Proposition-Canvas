@@ -54,8 +54,7 @@ def _cached_openai_call(cache_key: str, system_prompt: str, user_prompt: str,
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            max_tokens=500,
-            temperature=0.7
+            max_completion_tokens=1000
         )
         result = response.choices[0].message.content
 
@@ -173,7 +172,9 @@ class CoachingEngine:
                     "Each alternative must be a complete, standalone job statement (20-40 words). "
                     "Make each version more specific, actionable, and clear. "
                     "Vary the angle: one focusing on the task, one on the desired outcome, "
-                    "one on the context or trigger."
+                    "one on the context or trigger. "
+                    "IMPORTANT: Never use vague or generic terms such as 'things', 'stuff', "
+                    "'something', 'anything', or 'everything'. Replace them with concrete nouns."
                 )
                 user_prompt = (
                     f"Rewrite this job statement into {count} improved alternatives:\n\n"
@@ -186,7 +187,9 @@ class CoachingEngine:
                     "Generate example job statements for a work process reflection. "
                     "Each must be a complete, standalone statement (20-40 words) "
                     "from different work domains (e.g. project management, customer support, "
-                    "software development, marketing, operations)."
+                    "software development, marketing, operations). "
+                    "IMPORTANT: Never use vague or generic terms such as 'things', 'stuff', "
+                    "'something', 'anything', or 'everything'. Replace them with concrete nouns."
                 )
                 user_prompt = (
                     f"Generate {count} diverse example job statements that a professional "
