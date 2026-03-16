@@ -51,11 +51,66 @@ if _css_parts:
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
 
-# ── Theme Configuration (Light + Dark only) ──
+# ── Theme Configuration ──
 DEFAULT_THEME = "Light"
 THEME_CONFIGS = {
     "Light": {},  # Uses CSS :root defaults
     "Dark": {"attr": "dark"},
+    "Ocean": {"attr": "ocean"},
+    "Forest": {"attr": "forest"},
+    "Sunset": {"attr": "sunset"},
+}
+
+# Color palettes for CSS injection (Streamlit overrides require !important)
+_THEME_PALETTES = {
+    "Dark": {
+        "scheme": "dark",
+        "primary": "#60a5fa", "primary_hover": "#93bbfd", "primary_light": "#1e3a5f",
+        "bg_page": "#0f1117", "bg_card": "#1a1d27",
+        "text_primary": "#f1f5f9", "text_secondary": "#94a3b8", "text_muted": "#64748b",
+        "border": "#334155", "border_light": "#1e293b",
+        "success": "#34d399", "success_light": "#132f21",
+        "warning": "#fbbf24", "warning_light": "#3b2f10",
+        "error": "#f87171", "error_light": "#3b1515",
+        "pain": "#fb7185", "pain_light": "#3b1525",
+        "gain": "#2dd4bf", "gain_light": "#0f3b35",
+    },
+    "Ocean": {
+        "scheme": "light",
+        "primary": "#0891b2", "primary_hover": "#0e7490", "primary_light": "#e0f7fa",
+        "bg_page": "#f0f9ff", "bg_card": "#ffffff",
+        "text_primary": "#0c4a6e", "text_secondary": "#475569", "text_muted": "#94a3b8",
+        "border": "#bae6fd", "border_light": "#e0f2fe",
+        "success": "#059669", "success_light": "#ecfdf5",
+        "warning": "#d97706", "warning_light": "#fffbeb",
+        "error": "#dc2626", "error_light": "#fef2f2",
+        "pain": "#7c3aed", "pain_light": "#f5f3ff",
+        "gain": "#0d9488", "gain_light": "#f0fdfa",
+    },
+    "Forest": {
+        "scheme": "light",
+        "primary": "#15803d", "primary_hover": "#166534", "primary_light": "#f0fdf4",
+        "bg_page": "#f8faf5", "bg_card": "#ffffff",
+        "text_primary": "#1a2e05", "text_secondary": "#4b5563", "text_muted": "#9ca3af",
+        "border": "#bbcfad", "border_light": "#ecfccb",
+        "success": "#16a34a", "success_light": "#f0fdf4",
+        "warning": "#ca8a04", "warning_light": "#fefce8",
+        "error": "#dc2626", "error_light": "#fef2f2",
+        "pain": "#b45309", "pain_light": "#fffbeb",
+        "gain": "#047857", "gain_light": "#ecfdf5",
+    },
+    "Sunset": {
+        "scheme": "light",
+        "primary": "#ea580c", "primary_hover": "#c2410c", "primary_light": "#fff7ed",
+        "bg_page": "#fffbf5", "bg_card": "#ffffff",
+        "text_primary": "#431407", "text_secondary": "#57534e", "text_muted": "#a8a29e",
+        "border": "#e7e5e4", "border_light": "#f5f5f4",
+        "success": "#16a34a", "success_light": "#f0fdf4",
+        "warning": "#d97706", "warning_light": "#fffbeb",
+        "error": "#dc2626", "error_light": "#fef2f2",
+        "pain": "#be123c", "pain_light": "#fff1f2",
+        "gain": "#0d9488", "gain_light": "#f0fdfa",
+    },
 }
 
 
@@ -101,55 +156,69 @@ def reset_session_state(preserve_theme: bool = False):
 # Theme
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _build_theme_css(palette: dict) -> str:
+    """Generate CSS variable overrides + Streamlit component overrides for a theme."""
+    p = palette
+    is_dark = p["scheme"] == "dark"
+    color_scheme = "dark" if is_dark else "light"
+
+    # CSS variable overrides (covers all custom components via var() references)
+    css = f"""
+    :root {{
+        --color-primary: {p['primary']} !important;
+        --color-primary-hover: {p['primary_hover']} !important;
+        --color-primary-light: {p['primary_light']} !important;
+        --color-bg-page: {p['bg_page']} !important;
+        --color-bg-card: {p['bg_card']} !important;
+        --color-text-primary: {p['text_primary']} !important;
+        --color-text-secondary: {p['text_secondary']} !important;
+        --color-text-muted: {p['text_muted']} !important;
+        --color-border: {p['border']} !important;
+        --color-border-light: {p['border_light']} !important;
+        --color-success: {p['success']} !important;
+        --color-success-light: {p['success_light']} !important;
+        --color-warning: {p['warning']} !important;
+        --color-warning-light: {p['warning_light']} !important;
+        --color-error: {p['error']} !important;
+        --color-error-light: {p['error_light']} !important;
+        --color-pain: {p['pain']} !important;
+        --color-pain-light: {p['pain_light']} !important;
+        --color-gain: {p['gain']} !important;
+        --color-gain-light: {p['gain_light']} !important;
+    }}
+    /* Streamlit component overrides (Streamlit inlines styles, so !important is required) */
+    .stApp.stApp {{ background: {p['bg_page']} !important; color: {p['text_primary']} !important; color-scheme: {color_scheme} !important; }}
+    [data-testid="stAppViewContainer"],
+    .main, .main .block-container {{ background: {p['bg_page']} !important; color: {p['text_primary']} !important; }}
+    section[data-testid="stSidebar"],
+    section[data-testid="stSidebar"] > div {{ background: {p['bg_card']} !important; border-right-color: {p['border']} !important; }}
+    .stTextArea > div > div > textarea,
+    .stTextInput > div > div > input {{ background: {p['bg_card']} !important; color: {p['text_primary']} !important; border-color: {p['border']} !important; }}
+    .stSelectbox > div > div,
+    .stSelectbox [data-baseweb="select"],
+    [data-baseweb="popover"] > div {{ background: {p['bg_card']} !important; color: {p['text_primary']} !important; }}
+    h1, h2, h3, h4, p, span, label, .stMarkdown, .stCaption, a {{ color: {p['text_primary']} !important; }}
+    .stButton > button:not([kind="primary"]) {{ background: {p['bg_card']} !important; color: {p['text_primary']} !important; border-color: {p['border']} !important; }}
+    .stButton > button[kind="primary"] {{ background: {p['primary']} !important; border-color: {p['primary']} !important; }}
+    hr {{ background: {p['border']} !important; }}
+    .stTabs [data-baseweb="tab-list"] {{ border-bottom-color: {p['border']} !important; }}
+    .stTabs [data-baseweb="tab"] {{ color: {p['text_secondary']} !important; }}
+    .stRadio label, .stCheckbox label {{ color: {p['text_primary']} !important; }}
+    [data-testid="stForm"] {{ border-color: {p['border']} !important; }}
+    .stDownloadButton > button {{ background: {p['primary']} !important; border-color: {p['primary']} !important; }}
+    """
+    return css
+
+
 def apply_theme():
-    """Apply dark theme and accessibility overrides via CSS injection.
+    """Apply theme and accessibility overrides via CSS injection.
     Must be called early in the render cycle, before any content."""
     parts = []
 
-    if st.session_state.get("theme_mode") == "Dark":
-        parts.append("""
-        :root {
-            --color-primary: #60a5fa !important;
-            --color-primary-hover: #93bbfd !important;
-            --color-primary-light: #1e3a5f !important;
-            --color-bg-page: #0f1117 !important;
-            --color-bg-card: #1a1d27 !important;
-            --color-text-primary: #f1f5f9 !important;
-            --color-text-secondary: #94a3b8 !important;
-            --color-text-muted: #64748b !important;
-            --color-border: #334155 !important;
-            --color-border-light: #1e293b !important;
-            --color-success: #34d399 !important;
-            --color-success-light: #132f21 !important;
-            --color-warning: #fbbf24 !important;
-            --color-warning-light: #3b2f10 !important;
-            --color-error: #f87171 !important;
-            --color-error-light: #3b1515 !important;
-            --color-pain: #fb7185 !important;
-            --color-pain-light: #3b1525 !important;
-            --color-gain: #2dd4bf !important;
-            --color-gain-light: #0f3b35 !important;
-        }
-        .stApp.stApp { background: #0f1117 !important; color: #f1f5f9 !important; color-scheme: dark !important; }
-        [data-testid="stAppViewContainer"],
-        .main, .main .block-container { background: #0f1117 !important; color: #f1f5f9 !important; }
-        section[data-testid="stSidebar"],
-        section[data-testid="stSidebar"] > div { background: #1a1d27 !important; border-right-color: #334155 !important; }
-        .stTextArea > div > div > textarea,
-        .stTextInput > div > div > input { background: #1a1d27 !important; color: #f1f5f9 !important; border-color: #334155 !important; }
-        .stSelectbox > div > div,
-        .stSelectbox [data-baseweb="select"],
-        [data-baseweb="popover"] > div { background: #1a1d27 !important; color: #f1f5f9 !important; }
-        h1, h2, h3, h4, p, span, label, .stMarkdown, .stCaption, a { color: #f1f5f9 !important; }
-        .stButton > button:not([kind="primary"]) { background: #1a1d27 !important; color: #f1f5f9 !important; border-color: #334155 !important; }
-        .stButton > button[kind="primary"] { background: #60a5fa !important; border-color: #60a5fa !important; }
-        hr { background: #334155 !important; }
-        .stTabs [data-baseweb="tab-list"] { border-bottom-color: #334155 !important; }
-        .stTabs [data-baseweb="tab"] { color: #94a3b8 !important; }
-        .stRadio label, .stCheckbox label { color: #f1f5f9 !important; }
-        [data-testid="stForm"] { border-color: #334155 !important; }
-        .stDownloadButton > button { background: #60a5fa !important; border-color: #60a5fa !important; }
-        """)
+    theme_name = st.session_state.get("theme_mode", DEFAULT_THEME)
+    palette = _THEME_PALETTES.get(theme_name)
+    if palette:
+        parts.append(_build_theme_css(palette))
 
     if st.session_state.get("pref_large_text"):
         parts.append(":root { --font-scale: 1.1; }")
