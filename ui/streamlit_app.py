@@ -653,12 +653,14 @@ def _job_section():
     st.markdown("### Job Statement")
 
     _ver = st.session_state.get("_job_input_ver", 0)
+    _widget_key = f"spatial_job_input_v{_ver}"
+    if _widget_key not in st.session_state:
+        st.session_state[_widget_key] = st.session_state.job_description
     job = st.text_area(
         "What is the main task or goal you're trying to accomplish?",
-        value=st.session_state.job_description,
         height=120,
         placeholder="Example: I need to track my team's monthly expenses and generate financial reports efficiently, so I can make informed budget decisions...",
-        key=f"spatial_job_input_v{_ver}",
+        key=_widget_key,
         label_visibility="collapsed",
     )
     st.session_state.job_description = job
@@ -1112,12 +1114,14 @@ def _guided_job_step():
         _render_coaching_tip(tip)
 
     _ver = st.session_state.get("_job_input_ver", 0)
+    _widget_key = f"guided_job_input_v{_ver}"
+    if _widget_key not in st.session_state:
+        st.session_state[_widget_key] = st.session_state.job_description
     job = st.text_area(
         "Describe the task, goal, or objective:",
-        value=st.session_state.job_description,
         height=160,
         placeholder="Example: I need to track my team's monthly expenses and generate financial reports efficiently...",
-        key=f"guided_job_input_v{_ver}",
+        key=_widget_key,
     )
     st.session_state.job_description = job
 
@@ -1466,6 +1470,7 @@ def _load_canvas_from_db():
     if canvas:
         st.session_state.step = canvas.get("wizard_step", 0)
         st.session_state.job_description = canvas.get("job_description", "")
+        st.session_state["_job_input_ver"] = st.session_state.get("_job_input_ver", 0) + 1
         st.session_state.pain_points = list(canvas.get("pain_points", []))
         st.session_state.gain_points = list(canvas.get("gain_points", []))
         st.session_state.job_validated = canvas.get("job_validated", False)
