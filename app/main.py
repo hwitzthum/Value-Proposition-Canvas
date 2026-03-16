@@ -199,6 +199,16 @@ class SuggestionsRequest(BaseModel):
         return [sanitize_input(item.strip()) for item in v if item.strip()]
 
 
+class JobSuggestionsRequest(BaseModel):
+    current_description: str = Field(default="", max_length=5000)
+    count: int = Field(default=3, ge=1, le=5)
+
+    @field_validator('current_description')
+    @classmethod
+    def sanitize_description(cls, v: str) -> str:
+        return sanitize_input(v.strip()) if v else ""
+
+
 class GenerateDocumentRequest(BaseModel):
     job_description: str = Field(..., min_length=1, max_length=5000)
     pain_points: List[str] = Field(..., min_length=1, max_length=50)
@@ -374,6 +384,16 @@ async def get_suggestions(request: Request, data: SuggestionsRequest):
         )
     else:
         raise HTTPException(status_code=400, detail="Unknown step.")
+
+
+@app.post("/api/suggestions/job-statement", dependencies=[Depends(verify_api_key)])
+@limiter.limit(RATE_LIMIT_AI)
+async def get_job_statement_suggestions(request: Request, data: JobSuggestionsRequest):
+    """Get concrete, clickable job statement alternatives."""
+    return coach.get_job_statement_suggestions(
+        current_description=data.current_description,
+        count=data.count,
+    )
 
 
 @app.get("/api/coaching-tip/{step}", dependencies=[Depends(verify_api_key)])
