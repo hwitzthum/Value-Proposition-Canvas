@@ -455,7 +455,7 @@ def _render_suggestion_cards(suggestions_list: list, collection_key: str, item_t
                 unsafe_allow_html=True,
             )
         with col_btn:
-            if st.button("Add this", key=f"add_suggestion_{item_type}_{idx}", use_container_width=True):
+            if st.button("Add this", key=f"add_suggestion_{item_type}_{idx}", width='stretch'):
                 items = st.session_state.get(collection_key, [])
                 if not _is_duplicate(text, items):
                     items.append(text)
@@ -487,7 +487,7 @@ def _render_job_suggestion_cards(suggestions_list: list, prefix: str = "spatial"
                 unsafe_allow_html=True,
             )
         with col_btn:
-            if st.button("Use this", key=f"{prefix}_use_job_suggestion_{idx}", use_container_width=True):
+            if st.button("Use this", key=f"{prefix}_use_job_suggestion_{idx}", width='stretch'):
                 current = st.session_state.get("job_description", "").strip()
                 new_text = (current + "\n\n" + text) if current else text
                 st.session_state.job_description = new_text
@@ -745,8 +745,8 @@ def _items_column(collection_key: str, item_type: str, item_label: str,
                         label_visibility="collapsed",
                     )
                     c1, c2 = st.columns(2)
-                    save = c1.form_submit_button("Save", use_container_width=True)
-                    cancel = c2.form_submit_button("Cancel", use_container_width=True)
+                    save = c1.form_submit_button("Save", width='stretch')
+                    cancel = c2.form_submit_button("Cancel", width='stretch')
 
                 if save:
                     clean = edited.strip()
@@ -767,11 +767,11 @@ def _items_column(collection_key: str, item_type: str, item_label: str,
                 st.markdown(_build_item_html(i, text, item_type, similar=is_similar), unsafe_allow_html=True)
                 c1, c2, c3 = st.columns([1, 1, 1])
                 with c1:
-                    if st.button("Edit", key=f"edit_{item_type}_btn_{i}", use_container_width=True):
+                    if st.button("Edit", key=f"edit_{item_type}_btn_{i}", width='stretch'):
                         st.session_state[editing_key] = i
                         st.rerun()
                 with c2:
-                    if st.button("Improve", key=f"improve_{item_type}_btn_{i}", use_container_width=True):
+                    if st.button("Improve", key=f"improve_{item_type}_btn_{i}", width='stretch'):
                         with st.spinner("Improving..."):
                             result = call_api("/api/improve-item", "POST", {
                                 "item": text,
@@ -784,7 +784,7 @@ def _items_column(collection_key: str, item_type: str, item_label: str,
                             else:
                                 st.warning(result["error"])
                 with c3:
-                    if st.button("Delete", key=f"del_{item_type}_btn_{i}", use_container_width=True):
+                    if st.button("Delete", key=f"del_{item_type}_btn_{i}", width='stretch'):
                         st.session_state[collection_key].pop(i)
                         if st.session_state.get(editing_key) == i:
                             st.session_state[editing_key] = None
@@ -802,13 +802,13 @@ def _items_column(collection_key: str, item_type: str, item_label: str,
                     )
                     acc_col, rej_col = st.columns(2)
                     with acc_col:
-                        if st.button("Accept", key=f"accept_improve_{item_type}_{i}", type="primary", use_container_width=True):
+                        if st.button("Accept", key=f"accept_improve_{item_type}_{i}", type="primary", width='stretch'):
                             st.session_state[collection_key][i] = imp['improved']
                             del st.session_state[improve_key]
                             st.toast("Improvement accepted")
                             st.rerun()
                     with rej_col:
-                        if st.button("Reject", key=f"reject_improve_{item_type}_{i}", use_container_width=True):
+                        if st.button("Reject", key=f"reject_improve_{item_type}_{i}", width='stretch'):
                             del st.session_state[improve_key]
                             st.rerun()
     else:
@@ -835,7 +835,7 @@ def _items_column(collection_key: str, item_type: str, item_label: str,
     c1, c2 = st.columns(2)
     with c1:
         if st.button(f"Add {item_label}(s)", key=f"add_{item_type}_btn", type="primary",
-                      use_container_width=True):
+                      width='stretch'):
             if brainstorm.strip():
                 added = _add_item_from_brainstorm(
                     collection_key, validate_endpoint, payload_key,
@@ -855,7 +855,7 @@ def _items_column(collection_key: str, item_type: str, item_label: str,
         suggestions_state_key = f"_suggestions_{item_type}"
         if remaining > 0:
             if st.button(f"Suggest {remaining} more", key=f"suggest_{item_type}_btn",
-                          use_container_width=True):
+                          width='stretch'):
                 with st.spinner("Getting suggestions..."):
                     suggestions = call_api("/api/suggestions", "POST", {
                         "step": "pains" if item_type == "pain" else "gains",
@@ -955,7 +955,7 @@ def _items_column(collection_key: str, item_type: str, item_label: str,
                             )
                             mc1, mc2 = st.columns(2)
                             with mc1:
-                                if st.button("Accept merge", key=f"accept_merge_{item_type}_{i1}_{i2}", type="primary", use_container_width=True):
+                                if st.button("Accept merge", key=f"accept_merge_{item_type}_{i1}_{i2}", type="primary", width='stretch'):
                                     # Replace item at i1 with merged, remove item at i2
                                     st.session_state[collection_key][i1] = mr["merged"]
                                     st.session_state[collection_key].pop(i2)
@@ -963,7 +963,7 @@ def _items_column(collection_key: str, item_type: str, item_label: str,
                                     st.toast("Items merged")
                                     st.rerun()
                             with mc2:
-                                if st.button("Dismiss", key=f"dismiss_merge_{item_type}_{i1}_{i2}", use_container_width=True):
+                                if st.button("Dismiss", key=f"dismiss_merge_{item_type}_{i1}_{i2}", width='stretch'):
                                     del st.session_state[merge_key]
                                     st.rerun()
             # 'complete' priority → no warnings needed, positive feedback handles it
@@ -1095,12 +1095,12 @@ def _guided_step_nav(back_step: Optional[int], next_step: Optional[int],
     c1, c2 = st.columns(2)
     with c1:
         if back_step is not None:
-            if st.button(back_label, key=f"guided_back_{back_step}", use_container_width=True):
+            if st.button(back_label, key=f"guided_back_{back_step}", width='stretch'):
                 st.session_state.step = back_step
                 st.rerun()
     with c2:
         if next_step is not None:
-            if st.button(next_label, key=f"guided_next_{next_step}", use_container_width=True,
+            if st.button(next_label, key=f"guided_next_{next_step}", width='stretch',
                           type="primary", disabled=next_disabled):
                 st.session_state.step = next_step
                 st.rerun()
@@ -1200,8 +1200,8 @@ def _guided_items_step(collection_key: str, item_type: str, item_label: str,
                                            key=f"guided_edit_text_{item_type}_{i}",
                                            label_visibility="collapsed")
                     c1, c2 = st.columns(2)
-                    save = c1.form_submit_button("Save", use_container_width=True)
-                    cancel = c2.form_submit_button("Cancel", use_container_width=True)
+                    save = c1.form_submit_button("Save", width='stretch')
+                    cancel = c2.form_submit_button("Cancel", width='stretch')
                 if save:
                     clean = edited.strip()
                     if clean and not _is_duplicate(clean, items, exclude=i):
@@ -1217,12 +1217,12 @@ def _guided_items_step(collection_key: str, item_type: str, item_label: str,
                 c1, c2 = st.columns([1, 1])
                 with c1:
                     if st.button("Edit", key=f"guided_edit_{item_type}_btn_{i}",
-                                  use_container_width=True):
+                                  width='stretch'):
                         st.session_state[editing_key] = i
                         st.rerun()
                 with c2:
                     if st.button("Delete", key=f"guided_del_{item_type}_btn_{i}",
-                                  use_container_width=True):
+                                  width='stretch'):
                         st.session_state[collection_key].pop(i)
                         st.toast(f"{item_label.title()} removed")
                         st.rerun()
@@ -1236,7 +1236,7 @@ def _guided_items_step(collection_key: str, item_type: str, item_label: str,
             placeholder=f"Describe a specific {item_label}...",
             key=f"guided_new_{item_type}",
         )
-        submitted = st.form_submit_button(f"Add {item_label.title()}", use_container_width=True)
+        submitted = st.form_submit_button(f"Add {item_label.title()}", width='stretch')
 
     if submitted and new_text.strip():
         clean = new_text.strip()
@@ -1335,7 +1335,7 @@ def _guided_review_step():
         back_label="Back to Gains",
     )
 
-    if st.button("Start a new canvas", use_container_width=True):
+    if st.button("Start a new canvas", width='stretch'):
         reset_session_state(preserve_theme=True)
         st.rerun()
 
@@ -1401,7 +1401,7 @@ def render_export_bar():
     col1, col2 = st.columns(2)
     with col1:
         if st.button(f"Generate Word ({label})", key="generate_doc_btn", type="primary",
-                      use_container_width=True):
+                      width='stretch'):
             with st.spinner("Generating document..."):
                 try:
                     response = get_http_client().post(
@@ -1430,11 +1430,11 @@ def render_export_bar():
                 data=st.session_state["_doc_data"],
                 file_name="Value_Proposition_Canvas.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                use_container_width=True,
+                width='stretch',
             )
 
     with col2:
-        if st.button("Start new canvas", key="new_canvas_btn", use_container_width=True):
+        if st.button("Start new canvas", key="new_canvas_btn", width='stretch'):
             st.session_state.pop("_doc_data", None)
             st.session_state.pop("_doc_label", None)
             reset_session_state(preserve_theme=True)
@@ -1495,7 +1495,7 @@ def _change_password_dialog():
 
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("Change", type="primary", use_container_width=True, key="cp_submit"):
+        if st.button("Change", type="primary", width='stretch', key="cp_submit"):
             if not current or not new_pw:
                 st.error("All fields are required.")
             elif new_pw != confirm:
@@ -1510,7 +1510,7 @@ def _change_password_dialog():
                 else:
                     st.error(result.get("detail", "Password change failed."))
     with c2:
-        if st.button("Cancel", use_container_width=True, key="cp_cancel"):
+        if st.button("Cancel", width='stretch', key="cp_cancel"):
             st.rerun()
 
 
@@ -1529,7 +1529,7 @@ def _render_forced_password_change():
         new_pw = st.text_input("New Password", type="password",
                                 help=cfg["password_rules_text"])
         confirm = st.text_input("Confirm New Password", type="password")
-        submitted = st.form_submit_button("Change Password", use_container_width=True)
+        submitted = st.form_submit_button("Change Password", width='stretch')
 
     if new_pw:
         _render_password_strength(new_pw)
@@ -1554,7 +1554,7 @@ def _render_forced_password_change():
                 st.error(result.get("detail", "Password change failed."))
 
     st.markdown("---")
-    if st.button("Sign Out", use_container_width=True):
+    if st.button("Sign Out", width='stretch'):
         logout()
 
 
@@ -1641,9 +1641,9 @@ def main():
         st.checkbox("Large Text", key="pref_large_text")
 
         st.markdown("---")
-        if st.button("Change Password", key="change_pw_btn", use_container_width=True):
+        if st.button("Change Password", key="change_pw_btn", width='stretch'):
             _change_password_dialog()
-        if st.button("Sign Out", key="logout_btn", use_container_width=True):
+        if st.button("Sign Out", key="logout_btn", width='stretch'):
             logout()
 
     # Apply theme CSS after sidebar sets theme_mode
