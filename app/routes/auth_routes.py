@@ -133,23 +133,15 @@ async def login(request: Request, data: LoginRequest, db: Session = Depends(get_
         record_failed_login(db, user)
         raise _login_error
 
-    # Check account status
-    if user.status == "pending":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is pending admin approval.",
-        )
+    # Check account status — use the same error message for all non-active
+    # states to prevent account enumeration (attacker can't distinguish
+    # pending vs paused vs declined).
     if user.status != "active":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Account is {user.status}. Contact an administrator.",
-        )
+        raise _login_error
 
-    # Create session — use X-Forwarded-For when behind a proxy
-    forwarded = request.headers.get("X-Forwarded-For", "")
-    ip = forwarded.split(",")[0].strip() if forwarded else (
-        request.client.host if request.client else None
-    )
+    # Create session — use spoofing-resistant IP extraction
+    from ..security import get_real_ip
+    ip = get_real_ip(request)
     token = create_session(db, user, ip_address=ip)
 
     logger.info("User logged in: %s", user.email)

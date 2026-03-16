@@ -8,6 +8,7 @@ Authentication and session management.
 - FastAPI dependency for extracting current user from Bearer token
 """
 
+import hashlib
 import os
 import secrets
 import logging
@@ -18,7 +19,7 @@ import bcrypt as _bcrypt
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import delete
+from sqlalchemy import delete, func
 from sqlalchemy.orm import Session
 
 from .database import get_db
@@ -62,6 +63,17 @@ if INACTIVITY_TIMEOUT_MINUTES <= 0:
 
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
+MAX_SESSIONS_PER_USER = 10
+
+
+def _hash_token(token: str) -> str:
+    """Hash a session token with SHA-256 for storage.
+
+    Raw tokens are returned to clients; only hashes are stored in the DB.
+    This limits damage from a database compromise — leaked hashes cannot
+    be used to authenticate.
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 # ---------------------------------------------------------------------------
 # Status transition rules
@@ -84,26 +96,48 @@ def validate_status_transition(current: str, target: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def create_session(db: Session, user: User, ip_address: Optional[str] = None) -> str:
-    """Create a new session token for the user."""
+    """Create a new session token for the user.
+
+    The raw token is returned to the caller; only its SHA-256 hash is persisted.
+    Enforces MAX_SESSIONS_PER_USER by evicting the oldest session when at capacity.
+    """
+    now = datetime.now(timezone.utc)
+
     # Lazy cleanup: remove expired sessions for this user
     db.execute(
         delete(UserSession).where(
             UserSession.user_id == user.id,
-            UserSession.expires_at < datetime.now(timezone.utc),
+            UserSession.expires_at < now,
         )
     )
+
+    # Enforce max sessions — evict oldest if at capacity
+    active_count = (
+        db.query(func.count(UserSession.id))
+        .filter(UserSession.user_id == user.id)
+        .scalar()
+    )
+    if active_count >= MAX_SESSIONS_PER_USER:
+        oldest = (
+            db.query(UserSession)
+            .filter(UserSession.user_id == user.id)
+            .order_by(UserSession.created_at.asc())
+            .first()
+        )
+        if oldest:
+            db.delete(oldest)
 
     token = secrets.token_urlsafe(48)
     session = UserSession(
         user_id=user.id,
-        token=token,
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=SESSION_EXPIRY_HOURS),
+        token=_hash_token(token),
+        expires_at=now + timedelta(hours=SESSION_EXPIRY_HOURS),
         ip_address=ip_address,
     )
     db.add(session)
 
     # Update last login
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = now
     user.failed_login_attempts = 0
     user.locked_until = None
     db.commit()
@@ -113,9 +147,9 @@ def create_session(db: Session, user: User, ip_address: Optional[str] = None) ->
 
 
 def invalidate_session(db: Session, token: str) -> bool:
-    """Delete a session by token."""
+    """Delete a session by its raw token (hashes before lookup)."""
     result = db.execute(
-        delete(UserSession).where(UserSession.token == token)
+        delete(UserSession).where(UserSession.token == _hash_token(token))
     )
     db.commit()
     return result.rowcount > 0
@@ -131,11 +165,11 @@ def invalidate_all_user_sessions(db: Session, user_id) -> int:
 
 
 def invalidate_other_sessions(db: Session, user_id, keep_token: str) -> int:
-    """Delete all sessions for a user except the current one."""
+    """Delete all sessions for a user except the current one (hashes keep_token)."""
     result = db.execute(
         delete(UserSession).where(
             UserSession.user_id == user_id,
-            UserSession.token != keep_token,
+            UserSession.token != _hash_token(keep_token),
         )
     )
     db.commit()
@@ -143,11 +177,12 @@ def invalidate_other_sessions(db: Session, user_id, keep_token: str) -> int:
 
 
 def get_active_session(db: Session, token: str) -> Optional[UserSession]:
-    """Look up a session by token. Returns None if expired, inactive, or missing.
+    """Look up a session by raw token (hashes before DB lookup).
+    Returns None if expired, inactive, or missing.
     Updates last_activity_at on success."""
     session = (
         db.query(UserSession)
-        .filter(UserSession.token == token)
+        .filter(UserSession.token == _hash_token(token))
         .first()
     )
     if not session:

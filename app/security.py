@@ -2,7 +2,8 @@
 Security middleware and utilities.
 - Security headers (HSTS, X-Frame-Options, CSP, etc.)
 - Structured JSON logging configuration
-- Request body size limiting
+- Request body size limiting (with chunked-encoding protection)
+- Rate limiter with spoofing-resistant IP extraction
 """
 
 import logging
@@ -13,12 +14,29 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 logger = logging.getLogger(__name__)
 
 IS_PRODUCTION = os.getenv("PYTHON_ENV", "development") == "production"
 MAX_BODY_SIZE = int(os.getenv("MAX_BODY_SIZE", str(1 * 1024 * 1024)))  # 1 MB
+
+
+# ---------------------------------------------------------------------------
+# Spoofing-resistant IP extraction
+# ---------------------------------------------------------------------------
+def get_real_ip(request: Request) -> str:
+    """Extract the client IP for rate limiting.
+
+    Only trusts X-Forwarded-For in production (behind a reverse proxy).
+    In development, always uses the direct connection IP to prevent
+    attackers from spoofing arbitrary IPs via the header.
+    """
+    if IS_PRODUCTION:
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            # First entry is the client IP set by the trusted proxy
+            return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "127.0.0.1"
 
 
 # ---------------------------------------------------------------------------
@@ -58,17 +76,42 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # ---------------------------------------------------------------------------
 # Request Body Size Middleware
 # ---------------------------------------------------------------------------
+_BODY_METHODS = {"POST", "PUT", "PATCH"}
+_TOO_LARGE = Response(
+    content='{"detail":"Request body too large."}',
+    status_code=413,
+    media_type="application/json",
+)
+
+
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Reject requests larger than MAX_BODY_SIZE."""
+    """Reject requests larger than MAX_BODY_SIZE.
+
+    Checks Content-Length header when present, and for methods that carry
+    a body also reads the actual body when Content-Length is missing
+    (e.g. chunked transfer encoding) to prevent bypass.
+    """
 
     async def dispatch(self, request: Request, call_next) -> Response:
         content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > MAX_BODY_SIZE:
-            return Response(
-                content='{"detail":"Request body too large."}',
-                status_code=413,
-                media_type="application/json",
-            )
+
+        if content_length is not None:
+            try:
+                if int(content_length) > MAX_BODY_SIZE:
+                    return _TOO_LARGE
+            except (ValueError, OverflowError):
+                # Malformed Content-Length
+                return Response(
+                    content='{"detail":"Invalid Content-Length header."}',
+                    status_code=400,
+                    media_type="application/json",
+                )
+        elif request.method in _BODY_METHODS:
+            # No Content-Length — read body to enforce limit
+            body = await request.body()
+            if len(body) > MAX_BODY_SIZE:
+                return _TOO_LARGE
+
         return await call_next(request)
 
 
@@ -101,4 +144,4 @@ def configure_logging():
 # ---------------------------------------------------------------------------
 # Shared Rate Limiter (importable by route modules without circular deps)
 # ---------------------------------------------------------------------------
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(key_func=get_real_ip)

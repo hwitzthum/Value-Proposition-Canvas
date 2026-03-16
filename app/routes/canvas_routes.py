@@ -24,18 +24,31 @@ router = APIRouter(prefix="/api/canvases", tags=["canvases"])
 
 
 def _get_or_create_current(db: Session, user: User) -> Canvas:
-    """Return the user's current canvas, creating one if none exists."""
+    """Return the user's current canvas, creating one if none exists.
+
+    Handles the race condition where two concurrent requests could both
+    see ``canvas is None`` and each insert a row with ``is_current=True``.
+    """
     canvas = (
         db.query(Canvas)
         .filter(Canvas.user_id == user.id, Canvas.is_current == True)
         .first()
     )
     if canvas is None:
-        canvas = Canvas(user_id=user.id, is_current=True)
-        db.add(canvas)
-        db.commit()
-        db.refresh(canvas)
-        logger.info("Created new canvas for user %s", user.email)
+        try:
+            canvas = Canvas(user_id=user.id, is_current=True)
+            db.add(canvas)
+            db.commit()
+            db.refresh(canvas)
+            logger.info("Created new canvas for user %s", user.email)
+        except IntegrityError:
+            db.rollback()
+            # Another request won the race — fetch the row it created
+            canvas = (
+                db.query(Canvas)
+                .filter(Canvas.user_id == user.id, Canvas.is_current == True)
+                .first()
+            )
     return canvas
 
 
@@ -131,7 +144,7 @@ async def create_canvas(
 @limiter.limit(RATE_LIMIT_CANVAS)
 async def list_canvases(
     request: Request,
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=10000),
     limit: int = Query(50, ge=1, le=200),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
