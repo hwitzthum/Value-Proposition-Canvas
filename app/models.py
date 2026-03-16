@@ -142,7 +142,26 @@ class Canvas(Base):
 
     # Relationships
     user = relationship("User", back_populates="canvases")
+    share_links = relationship("CanvasShareLink", back_populates="canvas", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_canvases_user_current", "user_id", "is_current"),
     )
+
+
+# ---------------------------------------------------------------------------
+# CanvasShareLink
+# ---------------------------------------------------------------------------
+class CanvasShareLink(Base):
+    __tablename__ = "canvas_share_links"
+
+    id = Column(GUID(), primary_key=True, default=_new_uuid)
+    canvas_id = Column(GUID(), ForeignKey("canvases.id", ondelete="CASCADE"), nullable=False)
+    share_token = Column(String(64), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    # Relationships
+    canvas = relationship("Canvas", back_populates="share_links")

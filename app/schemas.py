@@ -215,3 +215,97 @@ class AdminStatsResponse(BaseModel):
     paused_users: int
     declined_users: int
     total_canvases: int
+
+
+# ---------------------------------------------------------------------------
+# Share Links
+# ---------------------------------------------------------------------------
+
+class CreateShareLinkRequest(BaseModel):
+    password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+    expires_in_hours: Optional[int] = Field(default=None, ge=1, le=8760)
+
+
+class SharePasswordRequest(BaseModel):
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class ShareLinkResponse(BaseModel):
+    id: UUID
+    share_token: str
+    has_password: bool
+    created_at: datetime
+    expires_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class SharedCanvasResponse(BaseModel):
+    title: str
+    job_description: str
+    pain_points: List[str]
+    gain_points: List[str]
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# JSON Import / Export
+# ---------------------------------------------------------------------------
+
+class CanvasExportJSON(BaseModel):
+    version: str = "1.0"
+    exported_at: datetime
+    title: str
+    job_description: str
+    pain_points: List[str]
+    gain_points: List[str]
+
+
+class CanvasImportRequest(BaseModel):
+    version: str = Field(default="1.0", pattern=r"^\d+\.\d+$")
+    title: Optional[str] = Field(default="Imported Canvas", max_length=200)
+    job_description: Optional[str] = Field(default="", max_length=5000)
+    pain_points: Optional[List[str]] = Field(default_factory=list)
+    gain_points: Optional[List[str]] = Field(default_factory=list)
+
+    @field_validator("title")
+    @classmethod
+    def sanitize_title(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return sanitize_input(v.strip()) if v.strip() else v
+
+    @field_validator("job_description")
+    @classmethod
+    def sanitize_job_description(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return sanitize_input(v.strip()) if v.strip() else v
+
+    @field_validator("pain_points")
+    @classmethod
+    def validate_pain_points(cls, v: Optional[List[str]]) -> List[str]:
+        if v is None:
+            return []
+        if len(v) > 50:
+            raise ValueError("Cannot import more than 50 pain points")
+        result = []
+        for item in v:
+            if len(item) > 2000:
+                raise ValueError("Each pain point must be 2000 characters or fewer")
+            result.append(sanitize_input(item.strip()) if item.strip() else item)
+        return result
+
+    @field_validator("gain_points")
+    @classmethod
+    def validate_gain_points(cls, v: Optional[List[str]]) -> List[str]:
+        if v is None:
+            return []
+        if len(v) > 50:
+            raise ValueError("Cannot import more than 50 gain points")
+        result = []
+        for item in v:
+            if len(item) > 2000:
+                raise ValueError("Each gain point must be 2000 characters or fewer")
+            result.append(sanitize_input(item.strip()) if item.strip() else item)
+        return result

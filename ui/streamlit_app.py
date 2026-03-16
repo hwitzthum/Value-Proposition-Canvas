@@ -3,6 +3,8 @@ Value Proposition Canvas — Streamlit UI.
 Spatial canvas (default) with optional guided mode.
 """
 
+import io
+import json
 import os
 import html
 import hashlib
@@ -1010,6 +1012,60 @@ def _items_column(collection_key: str, item_type: str, item_label: str,
         _render_coaching_tip(f"Great coverage with {len(items)} {item_label}s! Review for any overlaps.")
 
 
+def _compute_nudges(job: str, pains: list, gains: list) -> list:
+    """Fetch nudges from the validate/canvas endpoint (cached per content hash)."""
+    if not job.strip() and not pains and not gains:
+        return []
+    content_hash = hashlib.md5(
+        f"{job}|{pains}|{gains}".encode()
+    ).hexdigest()
+    cache_key = f"_nudges_{content_hash}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+    try:
+        resp = get_http_client().post(
+            f"{API_BASE_URL}/api/validate/canvas",
+            headers=get_api_headers(),
+            json={
+                "job_description": job,
+                "pain_points": pains,
+                "gain_points": gains,
+            },
+        )
+        if resp.status_code == 200:
+            nudges = resp.json().get("nudges", [])
+            st.session_state[cache_key] = nudges
+            return nudges
+    except Exception:
+        pass
+    return []
+
+
+def _render_nudge_cards(nudges: list, section_filter: str = None):
+    """Render nudge cards, optionally filtered by section."""
+    dismissed = st.session_state.get("_dismissed_nudges", set())
+    filtered = [n for n in nudges
+                if (section_filter is None or n.get("section") == section_filter)
+                and n.get("id") not in dismissed]
+    if not filtered:
+        return
+    for nudge in filtered:
+        severity = nudge.get("severity", "info")
+        icon = "💡" if severity == "suggestion" else "ℹ️"
+        css_class = "coaching-tip" if severity == "suggestion" else "validation-msg success"
+        st.markdown(f"""
+        <div class="nudge-card {severity}">
+            <span class="nudge-icon">{icon}</span>
+            <span class="nudge-text">{html.escape(nudge.get('message', ''))}</span>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("Dismiss", key=f"dismiss_{nudge['id']}", type="secondary"):
+            if "_dismissed_nudges" not in st.session_state:
+                st.session_state["_dismissed_nudges"] = set()
+            st.session_state["_dismissed_nudges"].add(nudge["id"])
+            st.rerun()
+
+
 def render_spatial_canvas():
     """Render the single-page spatial canvas layout."""
     # Job statement at top
@@ -1045,6 +1101,14 @@ def render_spatial_canvas():
             editing_key="editing_gain_index",
             ideal_min=cfg["min_gain_points"],
         )
+
+    # Proactive nudges
+    job = st.session_state.get("job_description", "")
+    pains = st.session_state.get("pain_points", [])
+    gains = st.session_state.get("gain_points", [])
+    nudges = _compute_nudges(job, pains, gains)
+    if nudges:
+        _render_nudge_cards(nudges)
 
     # Export bar
     st.markdown("---")
@@ -1382,8 +1446,32 @@ def render_guided_mode():
 # Export Bar
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _generate_export(endpoint: str, job: str, pains: list, gains: list,
+                     session_key: str) -> bool:
+    """Generate an export document via the backend. Returns True on success."""
+    try:
+        response = get_http_client().post(
+            f"{API_BASE_URL}{endpoint}",
+            headers=get_api_headers(),
+            json={
+                "job_description": job,
+                "pain_points": pains,
+                "gain_points": gains,
+                "title": "Value Proposition Canvas",
+            },
+        )
+        if response.status_code == 200:
+            st.session_state[session_key] = response.content
+            return True
+        else:
+            st.error("Failed to generate. Ensure all sections pass validation.")
+    except Exception as e:
+        st.error(f"Connection error: {e}")
+    return False
+
+
 def render_export_bar():
-    """Render the export/download section."""
+    """Render the export/download section with Word, PDF, CSV, JSON, and Share."""
     pains = st.session_state.get("pain_points", [])
     gains = st.session_state.get("gain_points", [])
     job = st.session_state.get("job_description", "")
@@ -1398,47 +1486,167 @@ def render_export_bar():
         st.caption("Add content to enable export.")
         return
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button(f"Generate Word ({label})", key="generate_doc_btn", type="primary",
-                      width='stretch'):
-            with st.spinner("Generating document..."):
-                try:
-                    response = get_http_client().post(
-                        f"{API_BASE_URL}/api/generate-document",
-                        headers=get_api_headers(),
-                        json={
-                            "job_description": job,
-                            "pain_points": pains,
-                            "gain_points": gains,
-                            "title": "Value Proposition Canvas",
-                        },
-                    )
-                    if response.status_code == 200:
-                        st.session_state["_doc_data"] = response.content
-                        st.session_state["_doc_label"] = label
-                    else:
-                        st.error("Failed to generate document.")
-                except Exception as e:
-                    st.error(f"Connection error: {e}")
-                    st.caption("Make sure the backend is running.")
+    # ── Document Exports (2x2 grid) ──
+    st.markdown("**Export Documents**")
+    row1_c1, row1_c2 = st.columns(2)
+    row2_c1, row2_c2 = st.columns(2)
 
-        # Show download button only after generation
+    # Word export
+    with row1_c1:
+        if st.button(f"Generate Word", key="generate_doc_btn", type="primary",
+                      width='stretch'):
+            with st.spinner("Generating Word..."):
+                _generate_export("/api/generate-document", job, pains, gains, "_doc_data")
         if st.session_state.get("_doc_data"):
             st.download_button(
-                label=f"Download Word ({st.session_state.get('_doc_label', label)})",
+                label="Download .docx",
                 data=st.session_state["_doc_data"],
                 file_name="Value_Proposition_Canvas.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 width='stretch',
             )
 
-    with col2:
-        if st.button("Start new canvas", key="new_canvas_btn", width='stretch'):
-            st.session_state.pop("_doc_data", None)
-            st.session_state.pop("_doc_label", None)
-            reset_session_state(preserve_theme=True)
-            st.rerun()
+    # PDF export
+    with row1_c2:
+        if st.button("Generate PDF", key="generate_pdf_btn", width='stretch'):
+            with st.spinner("Generating PDF..."):
+                _generate_export("/api/generate-pdf", job, pains, gains, "_pdf_data")
+        if st.session_state.get("_pdf_data"):
+            st.download_button(
+                label="Download .pdf",
+                data=st.session_state["_pdf_data"],
+                file_name="Value_Proposition_Canvas.pdf",
+                mime="application/pdf",
+                width='stretch',
+            )
+
+    # CSV export
+    with row2_c1:
+        if st.button("Generate CSV", key="generate_csv_btn", width='stretch'):
+            with st.spinner("Generating CSV..."):
+                _generate_export("/api/generate-csv", job, pains, gains, "_csv_data")
+        if st.session_state.get("_csv_data"):
+            st.download_button(
+                label="Download .csv",
+                data=st.session_state["_csv_data"],
+                file_name="Value_Proposition_Canvas.csv",
+                mime="text/csv",
+                width='stretch',
+            )
+
+    # JSON export
+    with row2_c2:
+        if st.button("Export JSON", key="export_json_btn", width='stretch'):
+            with st.spinner("Exporting JSON..."):
+                try:
+                    token = st.session_state.get("auth_token", "")
+                    api = CanvasAPIClient(API_BASE_URL, token)
+                    resp = httpx.post(
+                        f"{API_BASE_URL}/api/canvases/export/json",
+                        headers=get_api_headers(),
+                        timeout=10.0,
+                    )
+                    if resp.status_code == 200:
+                        st.session_state["_json_data"] = resp.text
+                    else:
+                        st.error("Failed to export JSON.")
+                except Exception as e:
+                    st.error(f"Connection error: {e}")
+        if st.session_state.get("_json_data"):
+            st.download_button(
+                label="Download .json",
+                data=st.session_state["_json_data"],
+                file_name="Value_Proposition_Canvas.json",
+                mime="application/json",
+                width='stretch',
+            )
+
+    # ── JSON Import ──
+    st.markdown("---")
+    st.markdown("**Import Canvas**")
+    uploaded = st.file_uploader("Import from JSON file", type=["json"], key="json_import_file")
+    if uploaded is not None:
+        try:
+            imported_data = json.loads(uploaded.read().decode("utf-8"))
+            if st.button("Import this canvas", key="import_json_btn", type="primary"):
+                with st.spinner("Importing..."):
+                    resp = httpx.post(
+                        f"{API_BASE_URL}/api/canvases/import/json",
+                        headers=get_api_headers(),
+                        json=imported_data,
+                        timeout=10.0,
+                    )
+                    if resp.status_code == 201:
+                        st.toast("Canvas imported successfully!")
+                        # Reload from DB
+                        st.session_state.pop("db_canvas_loaded", None)
+                        st.rerun()
+                    else:
+                        detail = resp.json().get("detail", "Import failed.")
+                        st.error(f"Import failed: {detail}")
+        except json.JSONDecodeError:
+            st.error("Invalid JSON file.")
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
+
+    # ── Share Link ──
+    st.markdown("---")
+    st.markdown("**Share Canvas**")
+    share_c1, share_c2 = st.columns(2)
+    with share_c1:
+        share_pw = st.text_input("Password (optional)", type="password", key="share_pw_input_create")
+    with share_c2:
+        share_expiry = st.selectbox("Expires in", ["Never", "1 hour", "24 hours", "7 days", "30 days"],
+                                     key="share_expiry_select")
+    expiry_map = {"Never": None, "1 hour": 1, "24 hours": 24, "7 days": 168, "30 days": 720}
+
+    if st.button("Create Share Link", key="create_share_btn", width='stretch'):
+        # Need the canvas ID from the current canvas
+        try:
+            canvas_resp = httpx.get(
+                f"{API_BASE_URL}/api/canvases/current",
+                headers=get_api_headers(),
+                timeout=10.0,
+            )
+            if canvas_resp.status_code == 200:
+                canvas_id = canvas_resp.json()["id"]
+                share_payload = {}
+                if share_pw:
+                    share_payload["password"] = share_pw
+                hours = expiry_map.get(share_expiry)
+                if hours:
+                    share_payload["expires_in_hours"] = hours
+
+                share_resp = httpx.post(
+                    f"{API_BASE_URL}/api/canvases/{canvas_id}/share",
+                    headers=get_api_headers(),
+                    json=share_payload,
+                    timeout=10.0,
+                )
+                if share_resp.status_code == 201:
+                    token_val = share_resp.json()["share_token"]
+                    # Build the frontend URL with share query param
+                    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:8501")
+                    share_url = f"{frontend_url}/?share={token_val}"
+                    st.session_state["_share_url"] = share_url
+                else:
+                    st.error("Failed to create share link.")
+            else:
+                st.error("No canvas found to share.")
+        except Exception as e:
+            st.error(f"Connection error: {e}")
+
+    if st.session_state.get("_share_url"):
+        st.code(st.session_state["_share_url"], language=None)
+        st.caption("Anyone with this link can view your canvas (read-only).")
+
+    # ── New Canvas ──
+    st.markdown("---")
+    if st.button("Start new canvas", key="new_canvas_btn", width='stretch'):
+        for k in ("_doc_data", "_pdf_data", "_csv_data", "_json_data", "_share_url"):
+            st.session_state.pop(k, None)
+        reset_session_state(preserve_theme=True)
+        st.rerun()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1577,8 +1785,107 @@ def _render_canvas_content():
         _save_canvas_to_db()
 
 
+def _render_shared_canvas():
+    """Render a read-only shared canvas view (no auth required)."""
+    token = st.query_params.get("share", "")
+    if not token:
+        return False
+
+    try:
+        url = f"{API_BASE_URL}/api/shared/{token}"
+        stored_pw = st.session_state.get("_share_password")
+
+        if stored_pw:
+            # Password already entered — send via POST body (not query string)
+            resp = httpx.post(url, json={"password": stored_pw}, timeout=10.0)
+        else:
+            # Try without password first (GET)
+            resp = httpx.get(url, timeout=10.0)
+
+        if resp.status_code == 401:
+            # Password required
+            st.markdown("""
+            <div class="auth-container">
+                <h1>Password Required</h1>
+                <p>This shared canvas is password-protected.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            pw = st.text_input("Enter password", type="password", key="share_pw_input")
+            if st.button("View Canvas", type="primary"):
+                st.session_state["_share_password"] = pw
+                st.rerun()
+            return True
+
+        if resp.status_code == 410:
+            st.error("This share link has expired or been revoked.")
+            return True
+
+        if resp.status_code != 200:
+            st.error("Unable to load shared canvas.")
+            return True
+
+        data = resp.json()
+    except Exception as e:
+        st.error(f"Could not connect to the server: {e}")
+        return True
+
+    # Render read-only view
+    st.markdown(f"""
+    <div class="app-header">
+        <h1>{html.escape(data.get('title', 'Shared Canvas'))}</h1>
+        <p>Shared read-only view</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Job description
+    st.markdown("### Job Description")
+    st.markdown(f"> {html.escape(data.get('job_description', ''))}")
+
+    pain_col, gain_col = st.columns(2, gap="large")
+    with pain_col:
+        pains = data.get("pain_points", [])
+        st.markdown(f"""
+        <div class="col-header pain">
+            <div class="col-header-icon pain">P</div>
+            <div class="col-header-title">Pain Points</div>
+            <div class="col-header-count">{len(pains)} items</div>
+        </div>
+        """, unsafe_allow_html=True)
+        for i, p in enumerate(pains, 1):
+            st.markdown(f"""
+            <div class="item-card">
+                <div class="item-badge pain">{i}</div>
+                <div class="item-text">{html.escape(p)}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with gain_col:
+        gains = data.get("gain_points", [])
+        st.markdown(f"""
+        <div class="col-header gain">
+            <div class="col-header-icon gain">G</div>
+            <div class="col-header-title">Gain Points</div>
+            <div class="col-header-count">{len(gains)} items</div>
+        </div>
+        """, unsafe_allow_html=True)
+        for i, g in enumerate(gains, 1):
+            st.markdown(f"""
+            <div class="item-card">
+                <div class="item-badge gain">{i}</div>
+                <div class="item-text">{html.escape(g)}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    return True
+
+
 def main():
     init_session_state()
+
+    # Shared canvas viewer (before auth gate)
+    if st.query_params.get("share"):
+        if _render_shared_canvas():
+            return
 
     # Auth gate
     if not check_auth():

@@ -21,6 +21,7 @@ from slowapi.errors import RateLimitExceeded
 from .validation import QualityValidator
 from .coaching import CoachingEngine
 from .document_generator import DocumentGenerator
+from .pdf_generator import CanvasPDFGenerator
 from .sanitization import sanitize_input, sanitize_filename
 from .schemas import PASSWORD_MIN_LENGTH, PASSWORD_RULES
 from .security import (
@@ -32,6 +33,7 @@ from .security import (
 from .routes.auth_routes import router as auth_router
 from .routes.canvas_routes import router as canvas_router
 from .routes.admin_routes import router as admin_router
+from .routes.share_routes import router as share_router
 
 # Configure structured logging before anything else
 configure_logging()
@@ -128,11 +130,13 @@ async def verify_api_key(api_key: Optional[str] = Security(api_key_header)) -> b
 validator = QualityValidator()
 coach = CoachingEngine()
 doc_generator = DocumentGenerator()
+pdf_generator = CanvasPDFGenerator()
 
 # ============ Include Routers ============
 app.include_router(auth_router)
 app.include_router(canvas_router)
 app.include_router(admin_router)
+app.include_router(share_router)
 
 
 # ============ Request/Response Models ============
@@ -356,12 +360,18 @@ async def validate_gain_points(request: Request, data: GainPointsRequest):
 @app.post("/api/validate/canvas", dependencies=[Depends(verify_api_key)])
 @limiter.limit(RATE_LIMIT_VALIDATION)
 async def validate_canvas(request: Request, data: CanvasValidationRequest):
-    """Validate the complete canvas."""
-    return validator.validate_complete_canvas(
+    """Validate the complete canvas and return proactive nudges."""
+    result = validator.validate_complete_canvas(
         data.job_description,
         data.pain_points,
         data.gain_points
     )
+    result['nudges'] = validator.compute_nudges(
+        data.job_description,
+        data.pain_points,
+        data.gain_points,
+    )
+    return result
 
 
 @app.post("/api/suggestions", dependencies=[Depends(verify_api_key)])
@@ -471,5 +481,77 @@ async def generate_document(request: Request, data: GenerateDocumentRequest):
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
             "Content-Disposition": f'attachment; filename="{safe_filename}.docx"'
+        }
+    )
+
+
+@app.post("/api/generate-pdf", dependencies=[Depends(verify_api_key)])
+@limiter.limit(RATE_LIMIT_AI)
+async def generate_pdf(request: Request, data: GenerateDocumentRequest):
+    """Generate a PDF document from the completed canvas."""
+    validation = validator.validate_complete_canvas(
+        data.job_description,
+        data.pain_points,
+        data.gain_points
+    )
+
+    if not validation['valid']:
+        raise HTTPException(
+            status_code=400,
+            detail="Canvas validation failed. Please fix all issues before generating."
+        )
+
+    buffer = pdf_generator.generate(
+        data.job_description,
+        data.pain_points,
+        data.gain_points,
+        data.title
+    )
+
+    safe_filename = sanitize_filename(data.title or "canvas")
+
+    return StreamingResponse(
+        io.BytesIO(buffer.getvalue()),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_filename}.pdf"'
+        }
+    )
+
+
+@app.post("/api/generate-csv", dependencies=[Depends(verify_api_key)])
+@limiter.limit(RATE_LIMIT_AI)
+async def generate_csv(request: Request, data: GenerateDocumentRequest):
+    """Generate a CSV export of the canvas data."""
+    import csv
+
+    validation = validator.validate_complete_canvas(
+        data.job_description,
+        data.pain_points,
+        data.gain_points
+    )
+
+    if not validation['valid']:
+        raise HTTPException(
+            status_code=400,
+            detail="Canvas validation failed. Please fix all issues before generating."
+        )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["section", "item_number", "content"])
+    writer.writerow(["job_description", 1, data.job_description])
+    for i, pain in enumerate(data.pain_points, 1):
+        writer.writerow(["pain_point", i, pain])
+    for i, gain in enumerate(data.gain_points, 1):
+        writer.writerow(["gain_point", i, gain])
+
+    safe_filename = sanitize_filename(data.title or "canvas")
+
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode("utf-8")),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_filename}.csv"'
         }
     )

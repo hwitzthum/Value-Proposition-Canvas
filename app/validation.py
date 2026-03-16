@@ -453,3 +453,106 @@ class QualityValidator:
             dim = self.classify_dimension(item)
             dist[dim] = dist.get(dim, 0) + 1
         return dist
+
+    def compute_nudges(self, job_description: str, pain_points: list, gain_points: list) -> list:
+        """Generate proactive nudges based on canvas content analysis.
+
+        Each nudge: {"id": str, "type": str, "section": str, "message": str, "severity": "info"|"suggestion"}
+        Returns at most 5 nudges.
+        """
+        nudges = []
+
+        # 1. Dimension imbalance per section
+        for section, items, label in [
+            ("pains", pain_points, "pain points"),
+            ("gains", gain_points, "gain points"),
+        ]:
+            if len(items) < 3:
+                continue
+            dist = self._count_dimensions(items)
+            total = sum(dist.values())
+            if total == 0:
+                continue
+            for dim, count in dist.items():
+                ratio = count / total
+                if ratio > 0.7:
+                    pct = round(ratio * 100)
+                    other_dims = [d for d in ('functional', 'emotional', 'social') if d != dim]
+                    suggestion = " or ".join(other_dims)
+                    nudges.append({
+                        "id": f"imbalance_{section}_{dim}",
+                        "type": "dimension_imbalance",
+                        "section": section,
+                        "message": f"{pct}% of your {label} are {dim} — consider adding {suggestion} perspectives.",
+                        "severity": "suggestion",
+                    })
+
+        # 2. Low specificity
+        for section, items, label in [
+            ("pains", pain_points, "pain points"),
+            ("gains", gain_points, "gain points"),
+        ]:
+            if not items:
+                continue
+            scores = [self.validate_item_quality(item, label.rstrip("s"))["score"] for item in items]
+            avg = sum(scores) / len(scores)
+            if avg < 60:
+                nudges.append({
+                    "id": f"specificity_{section}",
+                    "type": "low_specificity",
+                    "section": section,
+                    "message": f"Your {label} could be more specific. Try adding measurable details, timeframes, or concrete examples.",
+                    "severity": "suggestion",
+                })
+
+        # 3. Empty section (coverage gap)
+        has_job = bool(job_description.strip())
+        has_pains = len(pain_points) > 0
+        has_gains = len(gain_points) > 0
+
+        if has_job and not has_pains and has_gains:
+            nudges.append({
+                "id": "coverage_no_pains",
+                "type": "coverage_gap",
+                "section": "pains",
+                "message": "You have gain points but no pain points. Every job has friction — what obstacles does your customer face?",
+                "severity": "info",
+            })
+        elif has_job and has_pains and not has_gains:
+            nudges.append({
+                "id": "coverage_no_gains",
+                "type": "coverage_gap",
+                "section": "gains",
+                "message": "You have pain points but no gain points. What positive outcomes does your customer desire?",
+                "severity": "info",
+            })
+
+        # 4. Near threshold (close to minimum)
+        for section, items, label, minimum in [
+            ("pains", pain_points, "pain points", self.MIN_PAIN_POINTS),
+            ("gains", gain_points, "gain points", self.MIN_GAIN_POINTS),
+        ]:
+            count = len(items)
+            if minimum - 2 <= count < minimum:
+                needed = minimum - count
+                nudges.append({
+                    "id": f"near_threshold_{section}",
+                    "type": "near_threshold",
+                    "section": section,
+                    "message": f"You're close! Add {needed} more {label} to meet the minimum of {minimum}.",
+                    "severity": "info",
+                })
+
+        # 5. Job description quality
+        if has_job:
+            job_result = self.validate_job_description(job_description)
+            if job_result["score"] < 50:
+                nudges.append({
+                    "id": "job_quality",
+                    "type": "job_quality",
+                    "section": "job",
+                    "message": "Your job description could be stronger. Add context (when/why) and action verbs to make it more specific.",
+                    "severity": "suggestion",
+                })
+
+        return nudges[:5]

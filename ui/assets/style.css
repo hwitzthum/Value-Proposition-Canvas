@@ -1010,6 +1010,41 @@ hr {
     line-height: 1.5;
 }
 
+/* ── Nudge Cards ── */
+.nudge-card {
+    border-radius: var(--radius-sm);
+    padding: var(--space-3) var(--space-4);
+    margin: var(--space-2) 0;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    line-height: 1.5;
+}
+
+.nudge-card.suggestion {
+    background: var(--color-primary-light);
+    border: 1px solid var(--color-primary);
+    border-left: 3px solid var(--color-primary);
+    color: var(--color-text-primary);
+}
+
+.nudge-card.info {
+    background: var(--color-success-light);
+    border: 1px solid rgba(5, 150, 105, 0.2);
+    border-left: 3px solid var(--color-success);
+    color: var(--color-text-primary);
+}
+
+.nudge-icon {
+    flex-shrink: 0;
+    font-size: var(--font-size-md);
+}
+
+.nudge-text {
+    flex: 1;
+    font-size: var(--font-size-base);
+}
+
 /* ── Positive Feedback ── */
 .positive-feedback {
     background: var(--color-success-light);

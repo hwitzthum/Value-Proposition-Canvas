@@ -4,6 +4,7 @@ Canvas CRUD endpoints – authenticated, per-user data isolation.
 
 import logging
 import os
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -13,7 +14,14 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user
 from ..database import get_db
 from ..models import Canvas, User
-from ..schemas import CanvasListResponse, CanvasResponse, CanvasSaveRequest, MessageResponse
+from ..schemas import (
+    CanvasExportJSON,
+    CanvasImportRequest,
+    CanvasListResponse,
+    CanvasResponse,
+    CanvasSaveRequest,
+    MessageResponse,
+)
 from ..security import limiter
 
 logger = logging.getLogger(__name__)
@@ -185,3 +193,68 @@ async def delete_canvas(
     db.delete(canvas)
     db.commit()
     return MessageResponse(message="Canvas deleted.")
+
+
+# ---------------------------------------------------------------------------
+# POST /api/canvases/export/json
+# ---------------------------------------------------------------------------
+@router.post("/export/json")
+@limiter.limit(RATE_LIMIT_CANVAS)
+async def export_canvas_json(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Export the current canvas as a portable JSON document."""
+    canvas = (
+        db.query(Canvas)
+        .filter(Canvas.user_id == user.id, Canvas.is_current == True)
+        .first()
+    )
+    if canvas is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No current canvas found.",
+        )
+
+    return CanvasExportJSON(
+        version="1.0",
+        exported_at=datetime.now(timezone.utc),
+        title=canvas.title,
+        job_description=canvas.job_description,
+        pain_points=list(canvas.pain_points or []),
+        gain_points=list(canvas.gain_points or []),
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/canvases/import/json
+# ---------------------------------------------------------------------------
+@router.post("/import/json", response_model=CanvasResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit(RATE_LIMIT_CANVAS)
+async def import_canvas_json(
+    request: Request,
+    data: CanvasImportRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Import a canvas from a JSON document, creating a new canvas."""
+    # Un-current all existing canvases
+    db.query(Canvas).filter(
+        Canvas.user_id == user.id, Canvas.is_current == True
+    ).update({"is_current": False})
+
+    canvas = Canvas(
+        user_id=user.id,
+        is_current=True,
+        title=data.title or "Imported Canvas",
+        job_description=data.job_description or "",
+        pain_points=list(data.pain_points or []),
+        gain_points=list(data.gain_points or []),
+    )
+    db.add(canvas)
+    db.commit()
+    db.refresh(canvas)
+
+    logger.info("Canvas imported for user %s", user.email)
+    return CanvasResponse.model_validate(canvas)
