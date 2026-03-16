@@ -20,7 +20,7 @@ class QualityValidator:
 
     # Minimum requirements
     MIN_PAIN_POINTS = 7
-    MIN_GAIN_POINTS = 8
+    MIN_GAIN_POINTS = 7
 
     # Vague-word ratio threshold for specificity check
     VAGUE_WORD_RATIO = 0.2

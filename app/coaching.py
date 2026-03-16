@@ -311,7 +311,7 @@ Gains are the outcomes and benefits you desire from your work:
 
 Be specific about what success looks like for you.
 
-You need **at least 8 independent** gain points to proceed.""",
+You need **at least 7 independent** gain points to proceed.""",
             
             'review': """🎉 **Great work!**
 
