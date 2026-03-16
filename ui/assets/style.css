@@ -176,10 +176,16 @@
     font-size: calc(var(--font-size-base) * var(--font-scale));
 }
 
-/* Hide Streamlit chrome */
+/* Hide Streamlit chrome (keep sidebar toggle visible) */
 #MainMenu { visibility: hidden; }
 footer { visibility: hidden; }
-header { visibility: hidden; }
+header[data-testid="stHeader"] {
+    background: transparent !important;
+    border-bottom: none !important;
+}
+/* Hide the deploy/app menu button but keep sidebar collapse button */
+header[data-testid="stHeader"] [data-testid="stToolbar"] { display: none; }
+header[data-testid="stHeader"] [data-testid="stDecoration"] { display: none; }
 
 .main .block-container {
     padding-top: var(--space-6);

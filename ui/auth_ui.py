@@ -101,7 +101,8 @@ def change_password_request(token: str, current_password: str, new_password: str
 def _password_strength(password: str) -> tuple:
     """Returns (score 0-4, label, color, width%)."""
     score = 0
-    if len(password) >= 10:
+    pwd_min = st.session_state.get("_backend_config", {}).get("password_min_length", 10)
+    if len(password) >= pwd_min:
         score += 1
     if re.search(r"[A-Z]", password):
         score += 1
@@ -179,9 +180,12 @@ def render_login_page():
     with tab_register:
         reg_name = st.text_input("Display Name", placeholder="Your name", key="reg_name")
         reg_email = st.text_input("Email", placeholder="you@example.com", key="reg_email")
+        _pwd_help = st.session_state.get("_backend_config", {}).get(
+            "password_rules_text", "Min 10 chars, upper+lower+digit+special"
+        )
         reg_password = st.text_input(
             "Password", type="password", key="reg_pass",
-            help="Min 10 chars, upper+lower+digit+special",
+            help=_pwd_help,
         )
 
         # Password strength meter (updates live outside form)

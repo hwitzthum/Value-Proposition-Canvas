@@ -36,20 +36,61 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Load external CSS ──
-_css_parts = []
+# ── Load external CSS (read fresh each rerun to pick up changes) ──
 _CSS_PATH = Path(__file__).parent / "assets" / "style.css"
-if _CSS_PATH.exists():
-    _css_parts.append(_CSS_PATH.read_text())
 _ADMIN_CSS_PATH = Path(__file__).parent / "assets" / "admin.css"
-if _ADMIN_CSS_PATH.exists():
-    _css_parts.append(_ADMIN_CSS_PATH.read_text())
-if _css_parts:
-    st.markdown(f"<style>{''.join(_css_parts)}</style>", unsafe_allow_html=True)
+
+
+def _load_css():
+    """Load CSS files on every Streamlit rerun to avoid stale caches."""
+    parts = []
+    if _CSS_PATH.exists():
+        parts.append(_CSS_PATH.read_text())
+    if _ADMIN_CSS_PATH.exists():
+        parts.append(_ADMIN_CSS_PATH.read_text())
+    if parts:
+        st.markdown(f"<style>{''.join(parts)}</style>", unsafe_allow_html=True)
+
+
+_load_css()
 
 # ── API Configuration ──
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
+
+# ── Backend Config (fetched once per session, with safe fallbacks) ──
+_DEFAULT_CONFIG = {
+    "ai_enabled": True,
+    "min_pain_points": 7,
+    "min_gain_points": 7,
+    "similarity_threshold": 0.8,
+    "password_min_length": 10,
+    "password_rules_text": "Min 10 chars, upper+lower+digit+special",
+}
+
+
+def _fetch_backend_config() -> dict:
+    """Fetch business config from the backend /api/config endpoint."""
+    try:
+        resp = httpx.get(
+            f"{API_BASE_URL}/api/config",
+            headers={"X-API-Key": API_SECRET_KEY} if API_SECRET_KEY else {},
+            timeout=2.0,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            # Merge with defaults so missing keys don't break the UI
+            return {**_DEFAULT_CONFIG, **data}
+    except Exception as e:
+        logger.warning("Failed to fetch backend config: %s", e)
+    return dict(_DEFAULT_CONFIG)
+
+
+def get_backend_config() -> dict:
+    """Return cached backend config from session state, fetching if missing."""
+    if "_backend_config" not in st.session_state:
+        st.session_state["_backend_config"] = _fetch_backend_config()
+    return st.session_state["_backend_config"]
 
 # ── Theme Configuration ──
 DEFAULT_THEME = "Light"
@@ -137,6 +178,8 @@ def init_session_state():
     for key, default in INITIAL_STATE.items():
         if key not in st.session_state:
             st.session_state[key] = list(default) if isinstance(default, list) else default
+    # Fetch backend config once per session
+    get_backend_config()
     if "theme_mode" not in st.session_state:
         st.session_state.theme_mode = DEFAULT_THEME
     if "pref_high_contrast" not in st.session_state:
@@ -471,11 +514,12 @@ def _render_improve_comparison(original: str, improved: str, explanation: str):
 # Quality Thermometer (sidebar)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _quality_level_label(pain_count: int, gain_count: int, job_desc: str) -> tuple:
+def _quality_level_label(pain_count: int, gain_count: int, job_desc: str,
+                         ideal_total: int) -> tuple:
     """Returns (label, css_class) for the overall quality."""
     total = pain_count + gain_count
     has_job = bool(job_desc.strip())
-    if total >= 15 and has_job:
+    if total >= ideal_total and has_job:
         return ("Strong", "strong")
     elif total >= 6 and has_job:
         return ("Working", "working")
@@ -495,9 +539,11 @@ def render_quality_thermometer():
     pain_count = len(pains)
     gain_count = len(gains)
 
-    # Completeness: items vs ideal (7 pains + 8 gains = 15)
-    completeness = min(100, int((pain_count + gain_count) / 15 * 100))
-    # Balance: how close is the ratio to ideal 7:8
+    # Completeness: items vs ideal total from backend config
+    cfg = get_backend_config()
+    ideal_total = cfg["min_pain_points"] + cfg["min_gain_points"]
+    completeness = min(100, int((pain_count + gain_count) / ideal_total * 100))
+    # Balance: how close is the ratio to ideal
     if pain_count + gain_count > 0:
         ratio = min(pain_count, gain_count) / max(pain_count, gain_count, 1)
         balance = int(ratio * 100)
@@ -506,7 +552,7 @@ def render_quality_thermometer():
     # Job presence
     job_score = 100 if job.strip() else 0
 
-    label, label_class = _quality_level_label(pain_count, gain_count, job)
+    label, label_class = _quality_level_label(pain_count, gain_count, job, ideal_total)
 
     def bar_class(v):
         if v >= 70:
@@ -927,6 +973,8 @@ def render_spatial_canvas():
     # Pains (left) and Gains (right)
     pain_col, gain_col = st.columns(2, gap="large")
 
+    cfg = get_backend_config()
+
     with pain_col:
         _items_column(
             collection_key="pain_points",
@@ -937,7 +985,7 @@ def render_spatial_canvas():
             validate_fn=_validate_pains_cached,
             validated_key="pains_validated",
             editing_key="editing_pain_index",
-            ideal_min=7,
+            ideal_min=cfg["min_pain_points"],
         )
 
     with gain_col:
@@ -950,7 +998,7 @@ def render_spatial_canvas():
             validate_fn=_validate_gains_cached,
             validated_key="gains_validated",
             editing_key="editing_gain_index",
-            ideal_min=8,
+            ideal_min=cfg["min_gain_points"],
         )
 
     # Export bar
@@ -1238,6 +1286,8 @@ def render_guided_mode():
 
     _render_guided_progress()
 
+    cfg = get_backend_config()
+
     if st.session_state.step == 1:
         _guided_job_step()
     elif st.session_state.step == 2:
@@ -1246,7 +1296,7 @@ def render_guided_mode():
             collection_key="pain_points", item_type="pain", item_label="pain point",
             validate_endpoint="/api/validate/pain-points", payload_key="pain_points",
             validate_fn=_validate_pains_cached, validated_key="pains_validated",
-            editing_key="editing_pain_index", min_required=7,
+            editing_key="editing_pain_index", min_required=cfg["min_pain_points"],
             tip_step="pains", suggest_step="pains",
             back_step=1, next_step=3,
             back_label="Back to Job", next_label="Continue to Gains",
@@ -1257,7 +1307,7 @@ def render_guided_mode():
             collection_key="gain_points", item_type="gain", item_label="gain point",
             validate_endpoint="/api/validate/gain-points", payload_key="gain_points",
             validate_fn=_validate_gains_cached, validated_key="gains_validated",
-            editing_key="editing_gain_index", min_required=8,
+            editing_key="editing_gain_index", min_required=cfg["min_gain_points"],
             tip_step="gains", suggest_step="gains",
             back_step=2, next_step=4,
             back_label="Back to Pains", next_label="Continue to Review",
@@ -1372,8 +1422,9 @@ def _load_canvas_from_db():
 def _change_password_dialog():
     """Dialog for changing the current user's password."""
     current = st.text_input("Current Password", type="password", key="cp_current")
+    cfg = get_backend_config()
     new_pw = st.text_input("New Password", type="password", key="cp_new",
-                            help="Min 10 chars, upper+lower+digit+special")
+                            help=cfg["password_rules_text"])
     _render_password_strength(new_pw)
     confirm = st.text_input("Confirm New Password", type="password", key="cp_confirm")
 
@@ -1409,8 +1460,9 @@ def _render_forced_password_change():
 
     with st.form("forced_pw_change"):
         current = st.text_input("Current Password", type="password")
+        cfg = get_backend_config()
         new_pw = st.text_input("New Password", type="password",
-                                help="Min 10 chars, upper+lower+digit+special")
+                                help=cfg["password_rules_text"])
         confirm = st.text_input("Confirm New Password", type="password")
         submitted = st.form_submit_button("Change Password", use_container_width=True)
 

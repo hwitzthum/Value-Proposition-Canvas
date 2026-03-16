@@ -61,8 +61,11 @@ def _reset_password_dialog(client: AdminAPIClient, user_id: str, user_name: str)
     st.markdown(f"Reset password for **{user_name}**")
     st.caption("The user will be forced to change their password on next login.")
 
+    _pwd_help = st.session_state.get("_backend_config", {}).get(
+        "password_rules_text", "Min 10 chars, upper+lower+digit+special"
+    )
     new_password = st.text_input("New password", type="password",
-                                  help="Min 10 chars, upper+lower+digit+special")
+                                  help=_pwd_help)
     confirm = st.text_input("Confirm password", type="password")
 
     c1, c2 = st.columns(2)
@@ -72,15 +75,17 @@ def _reset_password_dialog(client: AdminAPIClient, user_id: str, user_name: str)
                 st.error("Password is required.")
             elif new_password != confirm:
                 st.error("Passwords do not match.")
-            elif len(new_password) < 10:
-                st.error("Password must be at least 10 characters.")
             else:
-                result = client.reset_password(user_id, new_password)
-                if result and "error" not in result:
-                    st.toast("Password reset successfully.")
-                    st.rerun()
+                _pwd_min = st.session_state.get("_backend_config", {}).get("password_min_length", 10)
+                if len(new_password) < _pwd_min:
+                    st.error(f"Password must be at least {_pwd_min} characters.")
                 else:
-                    st.error(result.get("error", "Reset failed.") if result else "Reset failed.")
+                    result = client.reset_password(user_id, new_password)
+                    if result and "error" not in result:
+                        st.toast("Password reset successfully.")
+                        st.rerun()
+                    else:
+                        st.error(result.get("error", "Reset failed.") if result else "Reset failed.")
     with c2:
         if st.button("Cancel", use_container_width=True, key="cancel_reset"):
             st.rerun()

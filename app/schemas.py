@@ -17,12 +17,14 @@ from .sanitization import sanitize_input
 # Auth
 # ---------------------------------------------------------------------------
 
+PASSWORD_MIN_LENGTH = 10
+
 _PASSWORD_PATTERN = re.compile(
-    r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>\/?]).{10,}$"
+    rf"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{{}};':\"\\|,.<>\/?]).{{{PASSWORD_MIN_LENGTH},}}$"
 )
 
 PASSWORD_RULES = (
-    "Password must be at least 10 characters and include uppercase, "
+    f"Password must be at least {PASSWORD_MIN_LENGTH} characters and include uppercase, "
     "lowercase, digit, and special character."
 )
 
@@ -30,7 +32,7 @@ PASSWORD_RULES = (
 class RegisterRequest(BaseModel):
     email: EmailStr
     display_name: str = Field(..., min_length=2, max_length=100)
-    password: str = Field(..., min_length=10, max_length=128)
+    password: str = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=128)
 
     @field_validator("password")
     @classmethod
@@ -185,7 +187,7 @@ class StatusUpdateRequest(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(..., min_length=1, max_length=128)
-    new_password: str = Field(..., min_length=10, max_length=128)
+    new_password: str = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=128)
 
     @field_validator("new_password")
     @classmethod
@@ -196,7 +198,7 @@ class ChangePasswordRequest(BaseModel):
 
 
 class AdminResetPasswordRequest(BaseModel):
-    new_password: str = Field(..., min_length=10, max_length=128)
+    new_password: str = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=128)
 
     @field_validator("new_password")
     @classmethod

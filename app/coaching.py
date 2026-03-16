@@ -10,6 +10,8 @@ import threading
 from typing import List, Optional
 from dotenv import load_dotenv
 
+from .validation import QualityValidator
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -271,12 +273,12 @@ class CoachingEngine:
     def get_coaching_tip(self, step: str) -> str:
         """Get a contextual coaching tip for the current step."""
         tips = {
-            'welcome': """Welcome to the Work Process Reflection Canvas! 
+            'welcome': f"""Welcome to the Work Process Reflection Canvas!
 
 This tool will guide you through understanding your own work better:
 • **Job Description**: What is the main task or goal you're trying to accomplish?
-• **Pain Points**: What obstacles, frustrations, or risks do you face? (minimum 7)
-• **Gain Points**: What outcomes and benefits do you desire? (minimum 8)
+• **Pain Points**: What obstacles, frustrations, or risks do you face? (minimum {QualityValidator.MIN_PAIN_POINTS})
+• **Gain Points**: What outcomes and benefits do you desire? (minimum {QualityValidator.MIN_GAIN_POINTS})
 
 Take your time with each step. Quality insights lead to better understanding of your work!""",
             
@@ -369,7 +371,6 @@ When you're satisfied, download your canvas as a Word document!"""
                     }
 
         # Fallback: targeted rule-based improvement
-        from app.validation import QualityValidator
         validator = QualityValidator()
         words = item.split()
         improved = item

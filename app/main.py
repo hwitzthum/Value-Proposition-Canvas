@@ -22,6 +22,7 @@ from .validation import QualityValidator
 from .coaching import CoachingEngine
 from .document_generator import DocumentGenerator
 from .sanitization import sanitize_input, sanitize_filename
+from .schemas import PASSWORD_MIN_LENGTH, PASSWORD_RULES
 from .security import (
     SecurityHeadersMiddleware,
     RequestSizeLimitMiddleware,
@@ -309,7 +310,9 @@ async def get_config(request: Request):
         "ai_enabled": coach.is_ai_enabled,
         "min_pain_points": validator.MIN_PAIN_POINTS,
         "min_gain_points": validator.MIN_GAIN_POINTS,
-        "similarity_threshold": validator.SIMILARITY_THRESHOLD
+        "similarity_threshold": validator.SIMILARITY_THRESHOLD,
+        "password_min_length": PASSWORD_MIN_LENGTH,
+        "password_rules_text": PASSWORD_RULES,
     }
 
 
