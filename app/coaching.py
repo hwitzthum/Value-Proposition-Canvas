@@ -95,9 +95,11 @@ class CoachingEngine:
     def is_ai_enabled(self) -> bool:
         return self.client is not None
     
-    def _call_openai(self, system_prompt: str, user_prompt: str) -> Optional[str]:
+    def _call_openai(self, system_prompt: str, user_prompt: str,
+                     openai_client=None) -> Optional[str]:
         """Call OpenAI API with caching and prompt injection defense."""
-        if not self.client:
+        client = openai_client or self.client
+        if not client:
             return None
 
         # Add prompt injection defense boundary
@@ -105,30 +107,32 @@ class CoachingEngine:
 
         cache_key = _generate_cache_key(hardened_system_prompt, user_prompt)
         return _cached_openai_call(
-            cache_key, hardened_system_prompt, user_prompt, self.client, self.model
+            cache_key, hardened_system_prompt, user_prompt, client, self.model
         )
     
-    def get_job_description_suggestions(self, current_description: str) -> dict:
+    def get_job_description_suggestions(self, current_description: str,
+                                           openai_client=None) -> dict:
         """
         Get prose coaching suggestions for improving the job description.
         Returns free-text feedback (used by /api/suggestions?step=job).
         For clickable alternatives, see get_job_statement_suggestions().
         """
-        if self.is_ai_enabled:
-            system_prompt = """You are a Value Proposition Canvas coach helping someone reflect on their own work processes. 
+        if openai_client or self.is_ai_enabled:
+            system_prompt = """You are a Value Proposition Canvas coach helping someone reflect on their own work processes.
             Analyze the job description and provide brief, actionable feedback.
-            Focus on: clarity, specificity, and whether it captures the functional, emotional, 
+            Focus on: clarity, specificity, and whether it captures the functional, emotional,
             and practical aspects of their work.
             Keep your response under 150 words."""
-            
-            user_prompt = f"""Analyze this job description about someone's own work and provide 2-3 specific 
+
+            user_prompt = f"""Analyze this job description about someone's own work and provide 2-3 specific
             suggestions for improvement:
 
             "{current_description}"
-            
+
             Format: Provide a brief assessment followed by bullet points of suggestions."""
-            
-            ai_response = self._call_openai(system_prompt, user_prompt)
+
+            ai_response = self._call_openai(system_prompt, user_prompt,
+                                            openai_client=openai_client)
             if ai_response:
                 return {
                     'source': 'ai',
@@ -158,13 +162,14 @@ class CoachingEngine:
             'suggestions': "\n".join(f"• {s}" for s in suggestions)
         }
     
-    def get_job_statement_suggestions(self, current_description: str, count: int = 3) -> dict:
+    def get_job_statement_suggestions(self, current_description: str, count: int = 3,
+                                         openai_client=None) -> dict:
         """
         Generate concrete, clickable job statement alternatives.
         When text exists → improve it. When empty → diverse examples.
         Returns {'source', 'suggestions', 'suggestions_list'}.
         """
-        if self.is_ai_enabled:
+        if openai_client or self.is_ai_enabled:
             if current_description.strip():
                 system_prompt = (
                     "You are a Value Proposition Canvas coach. "
@@ -197,7 +202,8 @@ class CoachingEngine:
                     f"Return ONLY a numbered list (1. 2. 3.) with no extra commentary."
                 )
 
-            ai_response = self._call_openai(system_prompt, user_prompt)
+            ai_response = self._call_openai(system_prompt, user_prompt,
+                                            openai_client=openai_client)
             if ai_response:
                 suggestions_list = self._parse_suggestions(ai_response)
                 return {
@@ -240,12 +246,13 @@ class CoachingEngine:
         }
 
     def get_pain_point_suggestions(self, job_description: str,
-                                    existing_pains: List[str], 
-                                    count_needed: int) -> dict:
+                                    existing_pains: List[str],
+                                    count_needed: int,
+                                    openai_client=None) -> dict:
         """
         Get suggestions for additional pain points.
         """
-        if self.is_ai_enabled:
+        if openai_client or self.is_ai_enabled:
             system_prompt = """You are a Value Proposition Canvas coach helping someone identify pain points in their own work.
             Pain points are obstacles, risks, frustrations, or negative outcomes they face in their work processes.
             Suggest distinct, specific pain points that haven't been covered yet.
@@ -262,7 +269,8 @@ class CoachingEngine:
             Consider: workflow obstacles, emotional frustrations, and situational challenges.
             Format each as a bullet point."""
             
-            ai_response = self._call_openai(system_prompt, user_prompt)
+            ai_response = self._call_openai(system_prompt, user_prompt,
+                                            openai_client=openai_client)
             if ai_response:
                 return {
                     'source': 'ai',
@@ -297,11 +305,12 @@ class CoachingEngine:
     
     def get_gain_point_suggestions(self, job_description: str,
                                     existing_gains: List[str],
-                                    count_needed: int) -> dict:
+                                    count_needed: int,
+                                    openai_client=None) -> dict:
         """
         Get suggestions for additional gain points.
         """
-        if self.is_ai_enabled:
+        if openai_client or self.is_ai_enabled:
             system_prompt = """You are a Value Proposition Canvas coach helping someone identify gains in their own work.
             Gains are outcomes, benefits, or positive results they desire from improving their work processes.
             Suggest distinct, specific gains that haven't been covered yet.
@@ -318,7 +327,8 @@ class CoachingEngine:
             Consider: efficiency gains, quality improvements, and desired outcomes.
             Format each as a bullet point."""
             
-            ai_response = self._call_openai(system_prompt, user_prompt)
+            ai_response = self._call_openai(system_prompt, user_prompt,
+                                            openai_client=openai_client)
             if ai_response:
                 return {
                     'source': 'ai',
@@ -410,12 +420,13 @@ When you're satisfied, download your canvas as a Word document!"""
         return tips.get(step, "Keep up the great work!")
 
     def improve_item(self, item: str, item_type: str,
-                     job_description: str = "", context_items: List[str] = None) -> dict:
+                     job_description: str = "", context_items: List[str] = None,
+                     openai_client=None) -> dict:
         """Improve a single pain/gain point using LLM.
 
         Returns dict with 'original', 'improved', 'explanation', 'source'.
         """
-        if self.is_ai_enabled:
+        if openai_client or self.is_ai_enabled:
             system_prompt = f"""You are a Value Proposition Canvas coach helping improve a {item_type}.
         Rewrite the item to be more specific, actionable, and clear.
         Return ONLY a JSON object with two keys:
@@ -432,7 +443,8 @@ When you're satisfied, download your canvas as a Word document!"""
             user_prompt = f"""Improve this {item_type}:
         "{item}"{context_str}"""
 
-            ai_response = self._call_openai(system_prompt, user_prompt)
+            ai_response = self._call_openai(system_prompt, user_prompt,
+                                            openai_client=openai_client)
             if ai_response:
                 try:
                     import json
@@ -507,12 +519,12 @@ When you're satisfied, download your canvas as a Word document!"""
         }
 
     def merge_items(self, item1: str, item2: str, item_type: str,
-                    job_description: str = "") -> dict:
+                    job_description: str = "", openai_client=None) -> dict:
         """Merge two similar items into one stronger item using LLM.
 
         Returns dict with 'merged', 'explanation', 'source'.
         """
-        if self.is_ai_enabled:
+        if openai_client or self.is_ai_enabled:
             system_prompt = f"""You are a Value Proposition Canvas coach. Two {item_type}s are too similar.
         Combine them into a single, stronger {item_type} that captures the essence of both.
         Return ONLY a JSON object with two keys:
@@ -528,7 +540,8 @@ When you're satisfied, download your canvas as a Word document!"""
         1. "{item1}"
         2. "{item2}"{context_str}"""
 
-            ai_response = self._call_openai(system_prompt, user_prompt)
+            ai_response = self._call_openai(system_prompt, user_prompt,
+                                            openai_client=openai_client)
             if ai_response:
                 try:
                     import json

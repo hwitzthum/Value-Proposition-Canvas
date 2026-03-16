@@ -82,6 +82,7 @@ class User(Base):
     status = Column(String(20), nullable=False, default="pending", index=True)
     is_admin = Column(Boolean, default=False, nullable=False)
     must_change_password = Column(Boolean, default=False, nullable=False)
+    encrypted_openai_key = Column(Text, nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)

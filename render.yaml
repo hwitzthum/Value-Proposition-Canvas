@@ -46,6 +46,10 @@ services:
         value: "10/minute"
       - key: RATE_LIMIT_VALIDATION
         value: "60/minute"
+      - key: RATE_LIMIT_BYOK
+        value: "10/minute"
+      - key: RATE_LIMIT_BYOK_TEST
+        value: "3/minute"
       - key: RATE_LIMIT_CANVAS
         value: "60/minute"
       - key: RATE_LIMIT_ADMIN

@@ -318,6 +318,25 @@ async def get_current_user_allow_password_change(
     return user
 
 
+async def get_optional_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """Dependency: returns authenticated user if Bearer token present, None otherwise.
+    Does NOT raise 401 — used by endpoints that optionally benefit from user context."""
+    if credentials is None:
+        return None
+
+    user = get_session_user(db, credentials.credentials)
+    if user is None:
+        return None
+
+    if user.status != "active":
+        return None
+
+    return user
+
+
 async def get_current_admin(
     user: User = Depends(get_current_user),
 ) -> User:

@@ -63,6 +63,7 @@ API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
 # ── Backend Config (fetched once per session, with safe fallbacks) ──
 _DEFAULT_CONFIG = {
     "ai_enabled": True,
+    "ai_source": "server_key",
     "min_pain_points": 7,
     "min_gain_points": 7,
     "similarity_threshold": 0.8,
@@ -305,6 +306,8 @@ def call_api(endpoint: str, method: str = "GET", data: dict = None) -> dict:
         client = get_http_client()
         if method == "GET":
             response = client.get(f"{API_BASE_URL}{endpoint}", headers=headers)
+        elif method == "DELETE":
+            response = client.delete(f"{API_BASE_URL}{endpoint}", headers=headers)
         else:
             response = client.post(f"{API_BASE_URL}{endpoint}", json=data, headers=headers)
         if response.status_code == 200:
@@ -1691,6 +1694,67 @@ def _load_canvas_from_db():
 # Main
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _render_byok_vault():
+    """Render the BYOK API key vault in the sidebar."""
+    with st.expander("AI API Key", expanded=False):
+        # Fetch current status
+        status = call_api("/api/byok/status")
+        if "error" in status:
+            st.caption("Log in to manage your API key.")
+            return
+
+        has_key = status.get("has_key", False)
+        key_hint = status.get("key_hint", "")
+        key_valid = status.get("key_valid", False)
+
+        if has_key:
+            if key_valid:
+                st.success(f"Key stored: {key_hint}", icon="\u2705")
+            else:
+                st.warning(f"Key stored but unreadable: {key_hint}", icon="\u26a0\ufe0f")
+
+            col_test, col_del = st.columns(2)
+            with col_test:
+                if st.button("Test", key="byok_test_btn", width="stretch"):
+                    result = call_api("/api/byok/test", method="POST")
+                    if result.get("valid"):
+                        st.success(result.get("message", "Valid!"))
+                    else:
+                        st.error(result.get("message", "Invalid key."))
+            with col_del:
+                if st.button("Delete", key="byok_delete_btn", width="stretch"):
+                    call_api("/api/byok/delete", method="DELETE")
+                    st.session_state.pop("_backend_config", None)
+                    st.rerun()
+        else:
+            cfg = get_backend_config()
+            ai_source = cfg.get("ai_source", "none")
+            if ai_source == "server_key":
+                st.caption("Server AI key active. Add your own to override.")
+            else:
+                st.caption("No AI key configured. Add your OpenAI key to enable AI coaching.")
+
+        new_key = st.text_input(
+            "OpenAI API Key",
+            type="password",
+            placeholder="sk-...",
+            key="byok_key_input",
+        )
+        if st.button("Save Key", key="byok_save_btn", width="stretch",
+                      disabled=not new_key):
+            if not new_key.startswith("sk-") or len(new_key) < 20:
+                st.error("Key must start with 'sk-' and be at least 20 characters.")
+            else:
+                result = call_api("/api/byok/save", method="POST",
+                                  data={"openai_api_key": new_key})
+                if "error" not in result:
+                    st.success("Key saved!")
+                    st.session_state.pop("_backend_config", None)
+                    st.rerun()
+                else:
+                    st.error(result.get("error", "Failed to save key."))
+
+
 @st.dialog("Change Password")
 def _change_password_dialog():
     """Dialog for changing the current user's password."""
@@ -1946,6 +2010,9 @@ def main():
         # Accessibility
         st.checkbox("High Contrast", key="pref_high_contrast")
         st.checkbox("Large Text", key="pref_large_text")
+
+        # BYOK API Key vault
+        _render_byok_vault()
 
         st.markdown("---")
         if st.button("Change Password", key="change_pw_btn", width='stretch'):

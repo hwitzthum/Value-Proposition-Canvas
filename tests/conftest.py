@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 # Force test environment BEFORE importing app modules
 os.environ["DATABASE_URL"] = "sqlite://"
-os.environ["API_SECRET_KEY"] = ""  # Disable API key auth in tests
+os.environ["API_SECRET_KEY"] = "test-secret-key-for-byok-encryption"
 os.environ["PYTHON_ENV"] = "development"
 os.environ["OPENAI_API_KEY"] = ""  # Disable OpenAI in tests
 os.environ["RATE_LIMIT_AUTH"] = "1000/minute"  # Effectively disable rate limiting in tests
@@ -24,7 +24,14 @@ os.environ["INACTIVITY_TIMEOUT_MINUTES"] = "30"
 from app.database import Base, get_db  # noqa: E402
 from app.models import User, UserSession, Canvas  # noqa: E402
 from app.auth import hash_password, create_session  # noqa: E402
-from app.main import app  # noqa: E402
+from app.main import app, verify_api_key  # noqa: E402
+
+
+# Override API key check so existing tests don't need X-API-Key header
+async def _override_verify_api_key():
+    return True
+
+app.dependency_overrides[verify_api_key] = _override_verify_api_key
 
 
 # In-memory SQLite with StaticPool so all sessions share one connection

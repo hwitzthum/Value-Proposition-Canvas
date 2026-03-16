@@ -92,6 +92,9 @@ class TestTimingSafeComparison:
     def test_api_key_rejects_wrong_key(self, client):
         """When API_SECRET_KEY is set, wrong key should be rejected."""
         from app import main as _main
+        from app.main import app, verify_api_key
+        # Temporarily restore the real verify_api_key for this test
+        app.dependency_overrides.pop(verify_api_key, None)
         original = _main.API_SECRET_KEY
         _main.API_SECRET_KEY = "test-secret-key"
         try:
@@ -99,10 +102,15 @@ class TestTimingSafeComparison:
             assert resp.status_code == 403
         finally:
             _main.API_SECRET_KEY = original
+            from tests.conftest import _override_verify_api_key
+            app.dependency_overrides[verify_api_key] = _override_verify_api_key
 
     def test_api_key_accepts_correct_key(self, client):
         """When API_SECRET_KEY is set, correct key should be accepted."""
         from app import main as _main
+        from app.main import app, verify_api_key
+        # Temporarily restore the real verify_api_key for this test
+        app.dependency_overrides.pop(verify_api_key, None)
         original = _main.API_SECRET_KEY
         _main.API_SECRET_KEY = "test-secret-key"
         try:
@@ -110,6 +118,8 @@ class TestTimingSafeComparison:
             assert resp.status_code == 200
         finally:
             _main.API_SECRET_KEY = original
+            from tests.conftest import _override_verify_api_key
+            app.dependency_overrides[verify_api_key] = _override_verify_api_key
 
 
 class TestRateLimitingOnRoutes:

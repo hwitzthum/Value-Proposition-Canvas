@@ -261,6 +261,33 @@ class CanvasExportJSON(BaseModel):
     gain_points: List[str]
 
 
+
+# ---------------------------------------------------------------------------
+# BYOK (Bring Your Own Key)
+# ---------------------------------------------------------------------------
+
+class SaveOpenAIKeyRequest(BaseModel):
+    openai_api_key: str = Field(..., min_length=20, max_length=256)
+
+    @field_validator("openai_api_key")
+    @classmethod
+    def validate_key_format(cls, v: str) -> str:
+        if not v.startswith("sk-"):
+            raise ValueError("OpenAI API key must start with 'sk-'")
+        return v
+
+
+class OpenAIKeyStatusResponse(BaseModel):
+    has_key: bool
+    key_hint: str = ""
+    key_valid: bool = False
+
+
+class OpenAIKeyTestResponse(BaseModel):
+    valid: bool
+    message: str
+
+
 class CanvasImportRequest(BaseModel):
     version: str = Field(default="1.0", pattern=r"^\d+\.\d+$")
     title: Optional[str] = Field(default="Imported Canvas", max_length=200)

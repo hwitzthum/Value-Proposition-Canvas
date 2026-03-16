@@ -30,10 +30,14 @@ from .security import (
     configure_logging,
     limiter,
 )
+from .auth import get_optional_user
+from .encryption import decrypt_api_key
+from .models import User
 from .routes.auth_routes import router as auth_router
 from .routes.canvas_routes import router as canvas_router
 from .routes.admin_routes import router as admin_router
 from .routes.share_routes import router as share_router
+from .routes.byok_routes import router as byok_router
 
 # Configure structured logging before anything else
 configure_logging()
@@ -137,6 +141,24 @@ app.include_router(auth_router)
 app.include_router(canvas_router)
 app.include_router(admin_router)
 app.include_router(share_router)
+app.include_router(byok_router)
+
+
+# ============ BYOK helpers ============
+
+
+def _resolve_openai_client(user: Optional[User]) -> Optional[object]:
+    """Resolve an OpenAI client from the user's BYOK key, if available."""
+    if user is None or not user.encrypted_openai_key:
+        return None
+    plaintext = decrypt_api_key(user.encrypted_openai_key)
+    if not plaintext:
+        return None
+    try:
+        from openai import OpenAI
+        return OpenAI(api_key=plaintext)
+    except Exception:
+        return None
 
 
 # ============ Request/Response Models ============
@@ -318,10 +340,27 @@ async def root():
 
 @app.get("/api/config", dependencies=[Depends(verify_api_key)])
 @limiter.limit(RATE_LIMIT_VALIDATION)
-async def get_config(request: Request):
+async def get_config(
+    request: Request,
+    user: Optional[User] = Depends(get_optional_user),
+):
     """Get configuration information."""
+    # Determine AI source without instantiating an OpenAI client
+    has_user_key = (
+        user is not None
+        and user.encrypted_openai_key
+        and decrypt_api_key(user.encrypted_openai_key) is not None
+    )
+    if has_user_key:
+        ai_source = "user_key"
+    elif coach.is_ai_enabled:
+        ai_source = "server_key"
+    else:
+        ai_source = "none"
+
     return {
-        "ai_enabled": coach.is_ai_enabled,
+        "ai_enabled": coach.is_ai_enabled or has_user_key,
+        "ai_source": ai_source,
         "min_pain_points": validator.MIN_PAIN_POINTS,
         "min_gain_points": validator.MIN_GAIN_POINTS,
         "similarity_threshold": validator.SIMILARITY_THRESHOLD,
@@ -376,21 +415,29 @@ async def validate_canvas(request: Request, data: CanvasValidationRequest):
 
 @app.post("/api/suggestions", dependencies=[Depends(verify_api_key)])
 @limiter.limit(RATE_LIMIT_AI)
-async def get_suggestions(request: Request, data: SuggestionsRequest):
+async def get_suggestions(
+    request: Request,
+    data: SuggestionsRequest,
+    user: Optional[User] = Depends(get_optional_user),
+):
     """Get AI-powered suggestions for the current step."""
+    oc = _resolve_openai_client(user)
     if data.step == 'job':
-        return coach.get_job_description_suggestions(data.job_description or "")
+        return coach.get_job_description_suggestions(
+            data.job_description or "", openai_client=oc)
     elif data.step == 'pains':
         return coach.get_pain_point_suggestions(
             data.job_description or "",
             data.existing_items or [],
-            data.count_needed or 3
+            data.count_needed or 3,
+            openai_client=oc,
         )
     elif data.step == 'gains':
         return coach.get_gain_point_suggestions(
             data.job_description or "",
             data.existing_items or [],
-            data.count_needed or 3
+            data.count_needed or 3,
+            openai_client=oc,
         )
     else:
         raise HTTPException(status_code=400, detail="Unknown step.")
@@ -398,11 +445,16 @@ async def get_suggestions(request: Request, data: SuggestionsRequest):
 
 @app.post("/api/suggestions/job-statement", dependencies=[Depends(verify_api_key)])
 @limiter.limit(RATE_LIMIT_AI)
-async def get_job_statement_suggestions(request: Request, data: JobSuggestionsRequest):
+async def get_job_statement_suggestions(
+    request: Request,
+    data: JobSuggestionsRequest,
+    user: Optional[User] = Depends(get_optional_user),
+):
     """Get concrete, clickable job statement alternatives."""
     return coach.get_job_statement_suggestions(
         current_description=data.current_description,
         count=data.count,
+        openai_client=_resolve_openai_client(user),
     )
 
 
@@ -418,25 +470,35 @@ async def get_coaching_tip(request: Request, step: str):
 
 @app.post("/api/improve-item", dependencies=[Depends(verify_api_key)])
 @limiter.limit(RATE_LIMIT_AI)
-async def improve_item(request: Request, data: ImproveItemRequest):
+async def improve_item(
+    request: Request,
+    data: ImproveItemRequest,
+    user: Optional[User] = Depends(get_optional_user),
+):
     """Improve a single pain/gain point using AI coaching."""
     return coach.improve_item(
         item=data.item,
         item_type=data.item_type,
         job_description=data.job_description or "",
         context_items=data.context_items or [],
+        openai_client=_resolve_openai_client(user),
     )
 
 
 @app.post("/api/merge-items", dependencies=[Depends(verify_api_key)])
 @limiter.limit(RATE_LIMIT_AI)
-async def merge_items(request: Request, data: MergeItemsRequest):
+async def merge_items(
+    request: Request,
+    data: MergeItemsRequest,
+    user: Optional[User] = Depends(get_optional_user),
+):
     """Merge two similar items into one stronger item."""
     return coach.merge_items(
         item1=data.item1,
         item2=data.item2,
         item_type=data.item_type,
         job_description=data.job_description or "",
+        openai_client=_resolve_openai_client(user),
     )
 
 
