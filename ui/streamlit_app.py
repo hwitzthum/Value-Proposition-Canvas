@@ -1326,7 +1326,9 @@ def render_export_bar():
     gains = st.session_state.get("gain_points", [])
     job = st.session_state.get("job_description", "")
 
-    label, label_class = _quality_level_label(len(pains), len(gains), job)
+    cfg = get_backend_config()
+    ideal_total = cfg["min_pain_points"] + cfg["min_gain_points"]
+    label, label_class = _quality_level_label(len(pains), len(gains), job, ideal_total)
 
     st.markdown(f'<div class="quality-label {label_class}" style="margin-bottom: 0.75rem;">Quality: {label}</div>', unsafe_allow_html=True)
 
