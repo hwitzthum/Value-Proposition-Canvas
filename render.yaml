@@ -69,10 +69,7 @@ services:
     startCommand: streamlit run ui/streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
     envVars:
       - key: API_BASE_URL
-        fromService:
-          type: web
-          name: vpc-api
-          property: host
+        value: https://vpc-api.onrender.com
       - key: API_SECRET_KEY
         fromService:
           type: web
