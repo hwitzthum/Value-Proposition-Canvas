@@ -57,7 +57,8 @@ def _load_css():
 _load_css()
 
 # ── API Configuration ──
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+_raw_api_url = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+API_BASE_URL = _raw_api_url if _raw_api_url.startswith("http") else f"https://{_raw_api_url}"
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
 
 # ── Backend Config (fetched once per session, with safe fallbacks) ──

@@ -68,7 +68,7 @@ services:
         fromService:
           type: web
           name: vpc-api
-          property: hostport
+          property: host
       - key: API_SECRET_KEY
         fromService:
           type: web

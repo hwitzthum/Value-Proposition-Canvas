@@ -20,7 +20,8 @@ from admin.admin_api import AdminAPIClient  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+_raw_api_url = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+API_BASE_URL = _raw_api_url if _raw_api_url.startswith("http") else f"https://{_raw_api_url}"
 
 st.set_page_config(
     page_title="VPC Admin",
