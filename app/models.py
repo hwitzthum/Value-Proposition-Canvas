@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     Boolean, Column, DateTime, ForeignKey, Integer, String, Text, Index,
 )
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.types import TypeDecorator, CHAR, JSON
 import uuid as _uuid
@@ -20,30 +20,21 @@ from .database import Base
 # Portable UUID type – works on both PostgreSQL (native UUID) and SQLite.
 # ---------------------------------------------------------------------------
 class GUID(TypeDecorator):
-    """Platform-independent UUID type. Uses PostgreSQL UUID when available,
-    otherwise stores as CHAR(36)."""
+    """Platform-independent UUID type. Stores as CHAR(36) on all dialects
+    to match the migration-created VARCHAR(36) columns."""
 
-    impl = CHAR
+    impl = CHAR(36)
     cache_ok = True
-
-    def load_dialect_impl(self, dialect):
-        if dialect.name == "postgresql":
-            return dialect.type_descriptor(PG_UUID(as_uuid=True))
-        return dialect.type_descriptor(CHAR(36))
 
     def process_bind_param(self, value, dialect):
         if value is None:
             return value
-        if dialect.name == "postgresql":
-            return value if isinstance(value, _uuid.UUID) else _uuid.UUID(value)
         return str(value)
 
     def process_result_value(self, value, dialect):
         if value is None:
             return value
-        if isinstance(value, _uuid.UUID):
-            return value
-        return _uuid.UUID(value)
+        return _uuid.UUID(value) if not isinstance(value, _uuid.UUID) else value
 
 
 # ---------------------------------------------------------------------------
