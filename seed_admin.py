@@ -2,13 +2,19 @@
 """
 Create the first admin user.
 
-Usage (interactive — always prompts for password):
+Usage (interactive):
     python seed_admin.py
     python seed_admin.py --email admin@example.com --name Admin
+
+Usage (non-interactive, for deployment):
+    python seed_admin.py --auto
+    Reads ADMIN_EMAIL and ADMIN_PASSWORD from environment variables.
+    Silently skips if env vars are missing or user already exists.
 """
 
 import argparse
 import getpass
+import os
 import re
 import sys
 
@@ -25,11 +31,47 @@ _PASSWORD_PATTERN = re.compile(
 )
 
 
+def _seed_from_env():
+    """Non-interactive seeding from ADMIN_EMAIL / ADMIN_PASSWORD env vars."""
+    email = os.getenv("ADMIN_EMAIL", "").strip()
+    password = os.getenv("ADMIN_PASSWORD", "").strip()
+    name = os.getenv("ADMIN_NAME", "Admin").strip()
+
+    if not email or not password:
+        print("ADMIN_EMAIL or ADMIN_PASSWORD not set, skipping auto-seed.")
+        return
+
+    if not _PASSWORD_PATTERN.match(password):
+        print("ADMIN_PASSWORD does not meet complexity requirements, skipping.")
+        return
+
+    with get_db_context() as db:
+        existing = db.query(User).filter(User.email == email.lower()).first()
+        if existing:
+            print(f"Admin user '{email}' already exists, skipping seed.")
+            return
+
+        user = User(
+            email=email.lower(),
+            display_name=name,
+            password_hash=hash_password(password),
+            status="active",
+            is_admin=True,
+        )
+        db.add(user)
+        print(f"Admin user '{email}' created successfully.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Create the first admin user.")
     parser.add_argument("--email", help="Admin email address")
     parser.add_argument("--name", help="Display name", default="Admin")
+    parser.add_argument("--auto", action="store_true", help="Non-interactive mode using env vars")
     args = parser.parse_args()
+
+    if args.auto:
+        _seed_from_env()
+        return
 
     email = args.email or input("Admin email: ").strip()
     if not email:
